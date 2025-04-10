@@ -1,0 +1,113 @@
+[
+    {
+      "name": "id",
+      "type": "STRING",
+      "mode": "REQUIRED"
+    },
+    {
+        "name": "type",
+        "type": "STRING",
+        "mode": "REQUIRED"
+    },
+    {
+        "name": "actor",
+        "type": "STRUCT",
+        "mode": "REQUIRED",
+        "fields": [
+            {
+                "name": "id",
+                "type": "INT",
+                "mode": "REQUIRED"
+            },
+            {
+                "name": "login",
+                "type": "STRING",
+                "mode": "REQUIRED"
+            },
+            {
+                "name": "gravatar_id",
+                "type": "STRING",
+                "mode": "REQUIRED"
+            },
+            {
+                "name": "url",
+                "type": "STRING",
+                "mode": "REQUIRED"
+            },
+            {
+                "name": "avatar_url",
+                "type": "STRING",
+                "mode": "REQUIRED"
+            }
+        ]
+    },
+    {
+        "name": "repo",
+        "type": "STRUCT",
+        "mode": "REQUIRED",
+        "fields": [
+            {
+                "name": "id",
+                "type": "INT",
+                "mode": "REQUIRED"
+            },
+            {
+                "name": "name",
+                "type": "STRING",
+                "mode": "REQUIRED"
+            },
+            {
+                "name": "url",
+                "type": "STRING",
+                "mode": "REQUIRED"
+            }
+        ]
+    },
+    {
+        "name": "payload",
+        "type": "ANY",
+        "mode": "REQUIRED"
+    },
+    {
+        "name": "public",
+        "type": "BOOL",
+        "mode": "REQUIRED"
+    },
+    {
+        "name": "created_at",
+        "type": "STRING",
+        "mode": "REQUIRED"
+    },
+    {
+        "name": "org",
+        "type": "STRUCT",
+        "mode": "NULLABLE",
+        "fields": [
+            {
+                "name": "id",
+                "type": "INT",
+                "mode": "REQUIRED"
+            },
+            {
+                "name": "login",
+                "type": "STRING",
+                "mode": "REQUIRED"
+            },
+            {
+                "name": "url",
+                "type": "STRING",
+                "mode": "REQUIRED"
+            },
+            {
+                "name": "gravatar_id",
+                "type": "STRING",
+                "mode": "REQUIRED"
+            },
+            {
+                "name": "avatar_url",
+                "type": "STRING",
+                "mode": "REQUIRED"
+            }
+        ]
+    }
+]
