@@ -4,6 +4,13 @@ A command line utility written in Rust to validate json-newline files against a 
 
 This tool **does not validate that the json is spec-compliant**, rather it validates that the json matches a custom schema.
 
+Test, and then install the `jsonsv` cli util with:
+
+```bash
+cargo test
+cargo install --path .  
+```
+
 Define a schema in a json file like this:
 
 ```json
@@ -20,7 +27,7 @@ Define a schema in a json file like this:
 and then validate a `.jsonl` against that schema using the tool:
 
 ```bash
-jsv -f mydata.jsonl -s mydata-schema.json
+jsonsv -f mydata.jsonl -s mydata-schema.json
 ```
 
 The schema format borrows from the BigQuery format [here](https://cloud.google.com/bigquery/docs/schemas#creating_a_JSON_schema_file), basically you

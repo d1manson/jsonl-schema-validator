@@ -3,6 +3,10 @@ name = "json-schema-validator"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "jsonsv"
+path = "src/main.rs"
+
 [dependencies]
 rustc-hash = "2.1.1"
 clap = { version = "4.5.35", features = ["derive"] }

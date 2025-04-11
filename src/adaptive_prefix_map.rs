@@ -2,7 +2,7 @@ use std::simd::num::SimdInt;
 use std::{hint, usize};
 use std::fmt::{self, Debug};
 use std::simd::cmp::SimdPartialEq;
-use std::simd::{Simd, Mask, SupportedLaneCount, LaneCount};
+use std::simd::{Simd, SupportedLaneCount, LaneCount};
 use core::array;
 use rustc_hash::FxHashMap;
 
@@ -371,7 +371,7 @@ where LaneCount<LANE_SIZE>: SupportedLaneCount {
     }
 
     fn find<F: Fn(&T) -> bool>(&self, cb: F) -> Option<&T> {
-        if let Some((_, v)) = self.map.iter().find(|(k, v)| cb(v)) {
+        if let Some((_, v)) = self.map.iter().find(|(_, v)| cb(v)) {
             return Some(&v);
         } else {
             return None;

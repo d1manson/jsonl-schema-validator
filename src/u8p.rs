@@ -170,10 +170,12 @@ where LaneCount<LANE_SIZE>: SupportedLaneCount
 /// For use primarily in benchmarks where you want to construct the padded buffer in one place
 /// and then access it as a u8p later, with zero cost when accessing it. 
 #[allow(non_camel_case_types)]
+#[cfg(test)]
 pub struct u8pOwned {
     buffer: Vec<u8>
 }
 
+#[cfg(test)]
 impl u8pOwned {
     pub fn from<T: Into<Vec<u8>>>(t: T) -> u8pOwned {
         let mut buffer : Vec<u8> = t.into();

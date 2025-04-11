@@ -6,6 +6,7 @@ use crate::adaptive_prefix_map::AdaptivePrefixMap;
 
 
 #[derive(Debug)]
+#[allow(non_camel_case_types)]
 pub enum FieldType {
     STRUCT(Box<AdaptivePrefixMap<Field>>),
 

@@ -6,7 +6,7 @@ use std::process;
 use clap::Parser;
 use serde_json;
 use serde::Deserialize;
-use std::time::{Instant, Duration};
+use std::time::Instant;
 
 pub(crate) mod u8p;
 pub(crate) mod micro_util;
