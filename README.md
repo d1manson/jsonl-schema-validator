@@ -57,7 +57,7 @@ The supported types are:
 ## Benchmarks
 
 The exact performance will depend a lot on the schema, the data, and the CPU arch, so it's hard to give a really useful benchmark. But as an initial guide, on an M4 Mac, it will validate a 26MB / 11.3k line 
-[file](https://github.com/json-iterator/test-data/blob/master/large-file.json) at ~1ms per MB / ~2.4µs per line.
+[file](https://github.com/json-iterator/test-data/blob/master/large-file.json) in ~25ms, i.e. at **~1GB per second / ~500k lines per second**.
 Currently it only supports single threaded excutation (multi threading is hopefully coming soon).
 
 ## Internals - what makes it fast?
@@ -109,24 +109,37 @@ return value.
 
 **But what about `\"`?...**
 
-Escapes make life more complicated, yes. For example, consider the string:
+Escapes make life more complicated, yes. For example, consider the crazy json snippet:
 
 ```
-{"x": "crazy\\\tstring\\\\\\\\\", "...
+{“str_field”: "xx\\\ty\\\\\\", "...
 ```
     
-Does the value of x include the `", ` bit or does it end at the last `\`? It turns out we can deal with this in SIMD (well not with pure
+Does the value of `str_field` include the `", ` bit or does it end at the last `\`? It turns out we can deal with this in SIMD (well not with pure
 SIMD instructions, but SIMD in spirit). The idea is that for each `\`, we want to know whether it's odd or an even within the contiguous
 block of `\`s. Then we can ignore any `"` charcters that are preceded by an odd `\`.
 
-```
-TODO: diagram
-```
+The first step is to simply get a mask of `1`s/`0`s showing where there is a `\` character in the block. Now we need to start counting contiguous
+blocks of `1`s, or rather counting modulo two. For this kind of even/odd counting, the XOR operation is all we need as if you keep XORing bits
+it will simply be `1` when the total number of `1`s encountered is odd, even otherwise.  We can use use shifts of `1`, then `2`, then `4`, and 
+then `8` to count the total number of `1`s across the 16 slots. But we also need to stop counting when a contiguous block has come to an end;
+thus we track another mask where we AND instead of XORing, but still using shifts of `1`, then `2`, and then `4`.
+
+Now if we carefully do these two sequences in the right order we find we can count, modulo two, how many slashes there are in a contiguous
+sequence.
+
+![escape](docs/escapes.svg)
+
+In the example the first contiguous sequence has three `\`s, which get converted to `101`. The second contiguous sequence has six `\`s which
+get converted to `101010`. That means the char before the ambiguous `"` is _even_, and thus the ambiguous `"` is the true end of the string.
 
 When looping over multiple blocks of SIMD blocks we need to keep track of an escape "carry" flag so we know whether the first character
 in the next block is escaped or not. That carry flag is simply defined by whether the final byte is an odd `\`.
 
 Now you know how to properly jump over a json string using SIMD, as implemented in `src/micro_util.rs@consume_string_generic`.
+
+The diagrams here show 16-byte (128bit) SIMD, which is what Mac's have, but x86 can go up to 64byte lanes, which should be noticably faster
+for parsing any json values longer than 16 bytes.
 
 **Ooh, what about bracket matching with SIMD?..**
 
@@ -134,14 +147,41 @@ Yes, we can!  In JSON there are two kinds of brackets: `[]`  and `{}`.  Even tho
 depth), if you just want to match one open bracket with its closing bracket, you can focus only on brackets of that flavour, ignoring the
 other kind entirely (if you are willing to assume the json is valid, which we always do here). The main trick here is going to be doing
 a cumulative sum of `+1`s/`-1`s in SIMD, but we will also have to find a way to ignore brackets that appear within strings as those don't
-count as real brackets.  Fortunately we've already mostly solved the question of strings in SIMD, so we won't need to itroduce too much
+count as real brackets.  Fortunately we've already mostly solved the question of strings in SIMD, so we won't need to introduce too much
 more to deal with that.
 
+Let's start with a simple case where we basically just have a field called `"messy"` with some `[]` brackets to match, without much else
+going on:
+
 ```
-TODO: more explanation and diagrams. Don't forget to mention the additional carry concepts.
+{"reps": [{"x": 1, "messy": [[[],[]],[]]}], "next": ...
 ```
 
-Now you know how to jump over an arbitrary json array/object using SIMD, as implemented in `src/micro_util.rs@consume_json_generic`.
+As before, let's assume we have done the work to get to the first bracket, `[`, and now we need to find the matching close bracket, `]`.
+
+The first step is to compare each byte against `[` and `]`, then converting `[` to `+1` and `]` to `-1`, to produce a single SIMD block
+of `+1`s and `-1`s. Now we need to do a cumulative sum to find when it first gets to zero. The cumulative sum is done by shifting by
+`1`, then `2`, then `4`, then `8`, and adding at each step. At the end we find the first zero, and that's our answer.
+
+![bracket-match](docs/bracket_match.svg)
+
+As before, we have to be careful when looping over multiple blocks. Within each block we start with the same logic of the `+1`/`-1` and
+cumulative sum, but then rather than looking for zero, we need to keep track of the depth we reached at the end of the last block, and
+see if we've negated that, e.g. if we ended at depth `+2`, we are now looking for the first `-2`. We keep looping until we find a match
+to the required depth.  Note that with this approach there is no danger of integer overflow within the cumulative sum steps because each
+block only needs to count at worst `+/-1 * LANE_SIZE`, and then it's after the cumulative sum that we deal with the running total of
+the true depth (aka the "carry"); we can easily track that in a `u64` or whatever (to support extremely deep json trees).
+
+That brings us back to the question of how to ignore brackets that are within strings. For example in this json - `[{"a": "]]]"}]` - the
+first `[` matches the last `]` because the other `]`s are within a string.
+
+So, we already know how to get a simd block with `1`s where there is a `"` character, and we know how to set those `1`s to `0` if the
+preceding character was an odd `\`. The final question then is how do we block out everything between an opening `"` and a closing `"`,
+so that we can ignore brackets in that range? This is actually a question of counting even/odd `1`s again, but this time we don't
+care about anything being "contiguous" as we did with the escapes.
+
+And that's it - we do have to be very careful with the "carry" as there are now three forms - the escape carry, the quote carry, and the
+bracket depth carry. But now you know how to jump over an arbitrary json array/object using SIMD, as implemented in `src/micro_util.rs@consume_json_generic`.
 
 
 **What else?**
@@ -177,7 +217,6 @@ it's always nice to hear from people who like your work ;)!
 - [ ] Explore more optimisations at the level of the `validate` function itself (to date optmisation has been mostly at lower 
       levels). This will presumably require implementing benchmarks for the function too.
 - [ ] Threading.
-- [ ] Document some of the SIMD tricks as they were kind of interesting and I'm not sure if anything is novel.
 - [ ] Provide some proper benchmarks using other tools.
 - [ ] Make sure x86 is sensibly optimised (so far focus has been on Arm Macs / Neon, though it should be ok on x86).
 - [ ] Publish it somewhere, to encourage people to actually use it for real.
