@@ -109,19 +109,29 @@ return value.
 
 **But what about `\"`?...**
 
-Escapes make life more complicated, yes. For example, consider the string:
+Escapes make life more complicated, yes. For example, consider the crazy json snippet:
 
 ```
-{"x": "crazy\\\tstring\\\\\\\\\", "...
+{“str_field”: "xx\\\ty\\\\\\", "...
 ```
     
-Does the value of x include the `", ` bit or does it end at the last `\`? It turns out we can deal with this in SIMD (well not with pure
+Does the value of `str_field` include the `", ` bit or does it end at the last `\`? It turns out we can deal with this in SIMD (well not with pure
 SIMD instructions, but SIMD in spirit). The idea is that for each `\`, we want to know whether it's odd or an even within the contiguous
 block of `\`s. Then we can ignore any `"` charcters that are preceded by an odd `\`.
 
-```
-TODO: diagram
-```
+The first step is to simply get a mask of `1`s/`0`s showing where there is a `\` character in the block. Now we need to start counting contiguous
+blocks of `1`s, or rather counting modulo two. For this kind of even/odd counting, the XOR operation is all we need as if you keep XORing bits
+it will simply be `1` when the total number of `1`s encountered is odd, even otherwise.  We can use use shifts of `1`, then `2`, then `4`, and 
+then `8` to count the total number of `1`s across the 16 slots. But we also need to stop counting when a contiguous block has come to an end;
+thus we track another mask where we AND instead of XORing, but still using shifts of `1`, then `2`, and then `4`.
+
+Now if we carefully do these two sequences in the right order we find we can count, modulo two, how many slashes there are in a contiguous
+sequence.
+
+![escape](docs/escapes.svg)
+
+In the example the first contiguous sequence has three `\`s, which get converted to `101`. The second contiguous sequence has six `\`s which
+get converted to `101010`. That means the char before the ambiguous `"` is _even_, and thus the ambiguous `"` is the true end of the string.
 
 When looping over multiple blocks of SIMD blocks we need to keep track of an escape "carry" flag so we know whether the first character
 in the next block is escaped or not. That carry flag is simply defined by whether the final byte is an odd `\`.
