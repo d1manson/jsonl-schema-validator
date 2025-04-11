@@ -460,29 +460,29 @@ where simd::LaneCount<LANE_SIZE>: simd::SupportedLaneCount {
 //#[inline(never)]
 pub fn is_odd_contiguous<const N_RIGHT_BITS: usize>(mask: u64, carry: bool) -> u64 {
     let mut ret  = mask;
-    let mut terminated = !mask;
+    let mut in_progress = mask; // 1: the corresponding bit in ret hasn't yet encountered the end of the block 
 
     ret &= (!0 << 1) | (!carry as u64); // if the carry flag is true, then the first bit in mask is forced to 0
 
-    ret ^= (ret << 1) & !terminated;
-    terminated |= terminated << 1;
+    ret ^= (ret << 1) & in_progress;
+    in_progress &= in_progress << 1;
 
-    ret ^= (ret << 2) & !terminated;
-    terminated |= terminated << 2;
+    ret ^= (ret << 2) & in_progress;
+    in_progress &= in_progress << 2;
 
-    ret ^=  (ret << 4) & !terminated;
-    terminated |= terminated << 4;
+    ret ^=  (ret << 4) & in_progress;
+    in_progress &= in_progress << 4;
 
-    ret ^=  (ret << 8) & !terminated;
+    ret ^=  (ret << 8) & in_progress;
 
     if N_RIGHT_BITS > 16 {
         assert_eq!(N_RIGHT_BITS, 64);
-        terminated |= terminated << 8;
+        in_progress &= in_progress << 8;
 
-        ret ^=  (ret << 16) & !terminated;
-        terminated |= terminated << 16;
+        ret ^=  (ret << 16) & in_progress;
+        in_progress &= in_progress << 16;
 
-        ret ^=  (ret << 32) & !terminated;
+        ret ^=  (ret << 32) & in_progress;
     }
 
     return ret;
