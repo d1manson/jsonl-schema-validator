@@ -7,6 +7,8 @@ use clap::Parser;
 use serde_json;
 use serde::Deserialize;
 use std::time::Instant;
+use human_format::{Scales, Formatter};
+
 
 pub(crate) mod u8p;
 pub(crate) mod micro_util;
@@ -115,23 +117,24 @@ fn main() {
     // buffer's capacity was increased sufficiently on pervious iterations), and then returned back to being the string, with zero length, ready
     // for use by the next_line again on the next iteration.
     let mut line = String::default();
-    let mut line_n = 0;
-    let mut err_count = 0;
+    let mut line_count: u64 = 0;
+    let mut err_count: u64 = 0;
+    let mut byte_count: u64 = 0;
 
     let start_time = Instant::now();
     while let Ok(bytes_read) = reader.read_line(&mut line) {
         if bytes_read == 0 {
             break;
         }
-        line_n += 1;
+        line_count += 1;
         let mut line_bytes = line.into_bytes();
+        byte_count += line_bytes.len() as u64 + 1; // assume newline is one additional byte
         let line_u8p = u8p::u8p::add_padding(&mut line_bytes);
-        //print!("{line_u8p:?}");
         
         let result = validate(&schema, next_field_idx-1, &line_u8p, &mut scratch);
         
         if result != ValidationResult::Valid {
-            println!("{line_n}: {result:?}");
+            println!("{line_count}: {result:?}");
             if args.exit_on_first_error {
                 process::exit(1);
             }
@@ -144,7 +147,14 @@ fn main() {
         }   
     }
 
-    println!("Read {line_n} lines with {err_count} errors, in {0:?} ({1:?} per line)", start_time.elapsed(), start_time.elapsed()/line_n);
+    let duration = start_time.elapsed();
+    println!("Read {0} / {1} with {err_count} errors in {2:?}. {3} | {4}", 
+        Formatter::new().with_separator("").with_units(" lines").format(line_count as f64),
+        Formatter::new().with_separator("").with_scales(Scales::Binary()).with_units("B").format(byte_count as f64),
+        duration,
+        Formatter::new().with_separator("").with_units(" lines/s").format(line_count as f64 / duration.as_secs_f64() as f64), 
+        Formatter::new().with_separator("").with_units("B/s").format(byte_count as f64 / duration.as_secs_f64() as f64)
+    );
     if err_count > 0 {
         process::exit(1);
     }
