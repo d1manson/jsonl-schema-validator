@@ -184,7 +184,7 @@ fn main() {
         if !is_valid && args.exit_on_first_error {
             process::exit(1);
         }
-        err_count += is_valid as usize;
+        err_count += !is_valid as usize;
         
         // recyle the string (i.e. the heap allocation), for the next line, which goes back into the channel
         let mut line = recyclable_string;
