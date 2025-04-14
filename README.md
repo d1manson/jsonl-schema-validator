@@ -57,8 +57,8 @@ The supported types are:
 ## Benchmarks
 
 The exact performance will depend a lot on the schema, the data, and the CPU arch, so it's hard to give a really useful benchmark. But as an initial guide, on an M4 Mac, it will validate a 26MB / 11.3k line 
-[file](https://github.com/json-iterator/test-data/blob/master/large-file.json) in ~25ms, i.e. at **~1GB per second / ~500k lines per second**.
-Currently it only supports single threaded excutation (multi threading is hopefully coming soon).
+[file](https://github.com/json-iterator/test-data/blob/master/large-file.json) in ~25ms, i.e. at **~1GB per second / ~500k lines per second**. It defaults to 4 threads, which achieves nearly
+3GB/s, you can control the number of threads with the `-t` argument.
 
 ## Internals - what makes it fast?
 
@@ -216,7 +216,6 @@ it's always nice to hear from people who like your work ;)!
 - [ ] Add tests on the `validate.rs` module itself.
 - [ ] Explore more optimisations at the level of the `validate` function itself (to date optmisation has been mostly at lower 
       levels). This will presumably require implementing benchmarks for the function too.
-- [ ] Threading.
 - [ ] Provide some proper benchmarks using other tools.
 - [ ] Make sure x86 is sensibly optimised (so far focus has been on Arm Macs / Neon, though it should be ok on x86).
 - [ ] Publish it somewhere, to encourage people to actually use it for real.

@@ -34,9 +34,12 @@ struct Args {
     schema_file: String,
 
     // either print all errors, or just the first
-    #[arg(short='x', long, action = clap::ArgAction::SetTrue)]
+    #[arg(short='x', long, action=clap::ArgAction::SetTrue)]
     exit_on_first_error: bool,
 
+    // main thread reads from file, worker threads do validation
+    #[arg(short='t', long, default_value="4")]
+    num_worker_threads: usize
 }
 
 
@@ -110,14 +113,13 @@ fn main() {
     let schema = AdaptivePrefixMap::create(schema);
 
     // once we've built the schema, we can now spawn some worker threads that get immutable borrows of it (we could actually copy it, but this works too)
-    const N_WORKERS: usize = 4;
-    const CHANNEL_CAPACITY: usize = N_WORKERS * 3;
+    let pool_capacity  = args.num_worker_threads * 3;
 
 
     std::thread::scope(|thread_scope| {
 
-    let (main_to_worker, worker_from_main) = cb_bchannel(CHANNEL_CAPACITY);
-    let (worker_to_main, main_from_worker) = cb_bchannel(CHANNEL_CAPACITY); // this could switch to mpsc from std, but using crossbeam for consistency
+    let (main_to_worker, worker_from_main) = cb_bchannel(pool_capacity);
+    let (worker_to_main, main_from_worker) = cb_bchannel(pool_capacity); // this could switch to mpsc from std, but using crossbeam for consistency
     
     // We jump through a few hoops here to not reallocate on the heap once the loop has warmped up.
     // Firstly, each thread creates a scratch instance which will grow in size to begin with, but then remain constant.
@@ -125,7 +127,7 @@ fn main() {
     // This may require reallocating for the first few times, until we've seen some really long lines, but then not after that. Note that this is handy because
     // we add zero padding to lines, so it's nice if the capacity is already there, rather than needing to do a copy in order to add padding.
 
-    for _ in 0..N_WORKERS {
+    for _ in 0..args.num_worker_threads {
         let worker_from_main : Receiver<(usize, String)> = worker_from_main.clone();
         let worker_to_main = worker_to_main.clone();
         let schema = &schema;
@@ -133,6 +135,9 @@ fn main() {
             let mut scratch = ValidateScratch::default();
 
             for (line_num, line) in worker_from_main {
+                if line_num == 0 {
+                    break;
+                }
                 let mut line_bytes = line.into_bytes();
                 let line_u8p = u8p::u8p::add_padding(&mut line_bytes);
 
@@ -151,7 +156,7 @@ fn main() {
             }
         });
     }
-    drop(worker_to_main); // only the threads should have a copy of this now
+    drop(worker_to_main); // only the threads should have a copy of this now, so they can control when the worker_to_main is completed.
 
     let file = File::open(args.jsonl_file.clone()).unwrap_or_else(|error| panic!("Problem opening the jsonl file {0:?}: {error:?}", args.jsonl_file));
     let mut reader = io::BufReader::new(file);
@@ -162,7 +167,7 @@ fn main() {
     let start_time = Instant::now();
     
     // fill channel to capacity
-    for _ in 0..CHANNEL_CAPACITY {
+    for _ in 0..pool_capacity {
         let mut line = "".to_string();
         let bytes_read = reader.read_line(&mut line).unwrap_or_else(|err| panic!("Reading file failed on line {line_count}: {err}"));
         if bytes_read == 0 {
@@ -173,9 +178,7 @@ fn main() {
         main_to_worker.send((line_count, line)).unwrap();
     }
 
-    // Main loop: keep reading lines from the file and recieving the results from the workers until both are done 
-    let mut main_to_worker_opt = Some(main_to_worker.clone());  // the version wrapped in Option is the sole copy of main_to_worker
-    drop(main_to_worker);
+    // Main loop: keep reading lines from the file and receiving the results from the workers until both are done 
     for (is_valid, recyclable_string) in main_from_worker {
         // deal with error
         if !is_valid && args.exit_on_first_error {
@@ -189,15 +192,12 @@ fn main() {
         if bytes_read > 0 {
             line_count += 1;
             byte_count += line.as_bytes().len() + 1; // assume newline is 1 byte
-            main_to_worker_opt
-                .as_ref()
-                .unwrap_or_else(|| panic!("read >0 bytes after prior read of 0 bytes"))
-                .send((line_count, line))
-                .unwrap();
+            main_to_worker.send((line_count, line)).unwrap();
         } else {
-            main_to_worker_opt = None; // dropping the main_to_worker socket will lead to the workers shutting down (once they've consumed the final messasges). 
-                                   // in turn, when all worker_to_main sockets are dropped by the closed threads (and all final messages have been processed here),
-                                   // this loop itself will terminate.
+            // sending line_num:0 is the signal to the worker thread to shut down (see the if-break statement in the worker loop).
+            // when all worker_to_main instances are dropped by the closed threads (and all final messages have been processed here), this loop
+            // itself will terminate. It's simpler to use 0 as a speical message rather than trying to drop the main_to_worker inside this loop.
+            main_to_worker.send((0, line)).unwrap();
         } 
     }
     let duration = start_time.elapsed();
