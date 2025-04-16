@@ -54,6 +54,7 @@ The supported types are inspired by - but not a perfect match to - BigQuery data
 - `DATE`* - date as a string, without a timezone, as `YYYY-MM-DD`, or `YYYY/MM/DD` or `YYYY.MM.DD`.
 - `TIME`* - time as a string, without a timezone, as `HH:MM:SS` (fractional seconds not supported currently)
 - `DATETIME`* - date and time as a string, without a timezone, as `YYYY-MM-DDTHH:MM::SS` (in the date part, `-` can be swapped for `/`, `.`).
+- `BYTES` - a base64 string.
 - `STRUCT` - a sub schema. In this case you need to provide a `"fields": [...]` property in the schema definition, with a list of sub fields. You can nest arbitrarily deeply, and/or use `REPEATED` mode if needed.
 - `ANY` - a unspecified blob of json (could be a scalar json value or a json array/object with arbitray depth).
 
@@ -74,10 +75,13 @@ making it appear faster per GB / per line.
 ## Internals - what makes it fast?
 
 - It's Rust, so there's no copying by default (and indeed I believe there is indeed no copying). There's also no heap allocation
-  after the first iteration or so of the main loop. 
+  after the first few iterations of the main loop (even the line data itself is read into a String from a pool of Strings; these 
+  initially need to grow their buffers dynamically, but presumably don't grow indefinitely). 
 - It uses SIMD for most of the supported types, including the `ANY` type - see section below with diagrams that walks through 
-  some of that.
-- It avoids unpredictable branches on the happy path as much as possible, even for `null`s, it avoids branching because a
+  some of that. Note in particular, we add 64 bytes of zero padding before parsing each line, making SIMD easier. Again, because
+  of the pool of Strngs, this padding step should stay within the String's capacity once the pool is warm (so no copy or heap
+  alloaciton as a result).
+- It avoids unpredictable branches on the happy path as much as possible, even for `null`s, it mostly avoids branching because a
   `null` is still valid (if the schema does not specify `REQUIRED`), and if the data is a random mix of `null`s and real values
   the CPU won't be able to predict what's coming up.
 - It avoids recursion - the nested structs are implement with a `Vec` stack rather than recursion. Not sure how much this helps,
@@ -87,6 +91,7 @@ making it appear faster per GB / per line.
   registers.  The most customised thing here was spun out into a spearate repo 
   [here](https://github.com/d1manson/rust-simd-psmap), though note that the version here is even more tuned for the specific 
   usecase of parsing json.
+- It shares work amongst a pool of threads.
 
 ## SIMD fun - some details
 
@@ -232,4 +237,3 @@ it's always nice to hear from people who like your work ;)!
 - [ ] Provide some proper benchmarks using other tools.
 - [ ] Make sure x86 is sensibly optimised (so far focus has been on Arm Macs / Neon, though it should be ok on x86).
 - [ ] Implement a TIMESTAMP validator (i.e with timezone), and have TIME support optional fractional seconds 
-- [ ] Implement BASE64 validator

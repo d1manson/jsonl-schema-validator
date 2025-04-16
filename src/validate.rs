@@ -20,11 +20,11 @@ pub enum FieldType {
     DECIMAL_29_9, // up to 29 digits before the decimal point, and up to 9 after (aka NUMERIC in BigQuery)
     
     STRING,
-  
+    
+    BYTES,
+    
     ANY // if incompatible data that can't be struct. or insufficient overlap in fields to treat as a struct (aka JSON in BigQuery)
-
     // not supported here:
-    // BYTES
     // GEOGRAPHY
     // INTERVAL
     // RANGE
@@ -217,6 +217,9 @@ pub fn validate<'a, 'b>(root_schema: &'a AdaptivePrefixMap<Field>, max_field_idx
                             micro_util::consume_within_range(&json_offset, QUOTED_DATETIME_LOWER, QUOTED_DATETIME_UPPER)
                             // missing: both kinds of checks above
                         },
+                        FieldType::BYTES => {
+                            micro_util::consume_base64(&json_offset)
+                        }
                         FieldType::ANY => {
                             micro_util::consume_json(&json_offset)
                         }

@@ -132,7 +132,7 @@ pub fn consume_string_generic<const LANE_SIZE: usize, const ALREADY_IN_STRING: b
         }
     } else {
         if first_byte != b'"' {
-            return 0; // not a string at all.
+            return 0; // not a string at all.  When the value is null, this branch is still on the happy path but is unrpedictable, which is a shame.
         }
     }
 
@@ -160,10 +160,58 @@ pub fn consume_string_generic<const LANE_SIZE: usize, const ALREADY_IN_STRING: b
 }
 
 /// Wraps consume_string_generic with a DEFAULT_LANE_SIZE set (would be nice if rust allowed for defaults on generics!)
-
 pub fn consume_string(json: &u8p)-> usize {
     consume_string_generic::<DEFAULT_LANE_SIZE, false>(json)
 }
+
+
+/// This assumes the json slice is the start of a spec-compliant value (not neccessarily a base64 string, but definitely compliant value).
+/// This returns the length of the string (including start and end quotes) if the string is a base64 string, otherwise zero.
+pub fn consume_base64_generic<const LANE_SIZE: usize>(json: &u8p) -> usize 
+where simd::LaneCount<LANE_SIZE> : simd::SupportedLaneCount
+{
+    // Note in this case we don't need to bother with escaped double quotes - because they're simply not valid within a base64 anyway,
+    // so if we encounter any before the end of the string we will be returning zero.
+
+    let first_byte = json.raw_u8s()[0];
+     
+    if first_byte != b'"' {
+        return 0; // not a string at all. This is a true branch on the happy path (if null is valid), sadly.
+    }
+
+    // unlike with strings, here we don't hyper-optimise to make the first iteration of the loop fast because while
+    // most strings in the wild are probably short, most bas64 is probably relatively long.
+    let mut ret = 0;
+    for (offset, data) in json.offset(1).iter_lanes::<LANE_SIZE>() {
+
+        let data_lower_case = data | Simd::<u8, LANE_SIZE>::splat(0x20);
+        // bas64 chars: A-Z, a-z, /-9, +  (note that / comes right before 0 in ascii)
+        let matched = 
+            (data_lower_case.simd_ge(Simd::<u8, LANE_SIZE>::splat(b'a')) & data_lower_case.simd_le(Simd::<u8, LANE_SIZE>::splat(b'z')))
+            | (data.simd_ge(Simd::<u8, LANE_SIZE>::splat(b'/')) & data.simd_le(Simd::<u8, LANE_SIZE>::splat(b'9')))
+            | data.simd_eq(Simd::<u8, LANE_SIZE>::splat(b'+'));
+        if !matched.all() {
+            ret = matched.to_bitmask().trailing_ones() as usize + offset + 1 /* for the opening double quote */;
+            break;
+        }
+    }
+    // the remainder must be one of: {", =", ==", ==="}
+    let remainder = json.offset(ret);
+    let n_padding = remainder.initial_lane::<4, 0>().simd_eq(Simd::<u8, 4>::splat(b'=')).to_bitmask().trailing_ones() as usize;
+
+    if (n_padding < 4) & (*remainder.raw_u8s().get(n_padding).unwrap_or(&0) == b'"') {
+        return ret + n_padding + 1 /* close quote */; 
+    } else {
+        return  0;
+    }
+
+}
+
+pub fn consume_base64(json: &u8p) -> usize {
+    consume_base64_generic::<DEFAULT_LANE_SIZE>(json)
+}
+
+
 
 fn black_box_zero() -> usize {
     // read_volatile here is a trick borrowed from criterion's black_box.
@@ -261,6 +309,8 @@ pub fn consume_int64(json: &u8p) -> usize {
     return good_chars as usize & valid_mask;
 
 }
+
+
 
 
 
@@ -838,6 +888,16 @@ mod tests {
         assert_eq!(consume_string(&u8p!(b"\"12345678901234\\\"7890\"    ")), 22);
         assert_eq!(consume_string(&u8p!(b"\"1234567890123\\\\\"    ")), 17);
         assert_eq!(consume_string(&u8p!(b"\"12345678901234\\6789012\\\"5678\"    ")), 30);
+    }
+
+    #[test]
+    fn test_consume_base64(){
+        assert_eq!(consume_base64(&u8p!(b"\"123456789\"   ")), 11);
+        assert_eq!(consume_base64(&u8p!(b"\"123456789=\"   ")), 12);
+        assert_eq!(consume_base64(&u8p!(b"\"123456789==\"   ")), 13);
+        assert_eq!(consume_base64(&u8p!(b"\"123456789===\"   ")), 14);
+        assert_eq!(consume_base64(&u8p!(b"\"123456789====\"   ")), 0);
+        assert_eq!(consume_base64(&u8p!(b"\"123456789?\"   ")), 0);
     }
 
  

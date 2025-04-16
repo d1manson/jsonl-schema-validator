@@ -89,6 +89,9 @@ fn field_from_json(field_json: &SerdeField, next_field_idx: &mut usize) -> Field
         "NUMERIC" => FieldType::DECIMAL_29_9,
 
         "STRING" => FieldType::STRING,
+        "BYTES" => FieldType::BYTES,
+        "BASE64" => FieldType::BYTES,
+        
         "ANY" => FieldType::ANY,
         "JSON" => FieldType::ANY,
         t => panic!("Unrecognised type: {t}")
