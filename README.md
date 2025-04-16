@@ -36,23 +36,24 @@ and then validate a `.jsonl` against that schema using the tool:
 jsonsv -f mydata.jsonl -s mydata-schema.json
 ```
 
-The schema format borrows from the BigQuery format [here](https://cloud.google.com/bigquery/docs/schemas#creating_a_JSON_schema_file), basically you
-need to supply at least a `name` and `type` for each field. The supported modes are:
+The schema format borrows from the BigQuery format [here](https://cloud.google.com/bigquery/docs/schemas#creating_a_JSON_schema_file), 
+basically you need to supply at least a `name` and `type` for each field. The supported modes are:
 
 -  `NULLABLE` (default) - field is not required in the json, and if provided it can be `null`.
 -  `REQUIRED` - field must be present in the json and cannot be `null`.
 -  `REPEATED` - similar to `NULLABLE`, but if the field is non-`null` it must be a json array of the given type.
 
-The supported types are:
+The supported types are inspired by - but not a perfect match to - BigQuery data types and its JSON loading logic (compare with 
+[here](https://cloud.google.com/bigquery/docs/loading-data-cloud-storage-json)):
 
 - `STRING` - a json string
 - `BOOL` - basic json `true`/`false`
 - `FLOAT64` - any json number (details not validated).
 - `INT64` - a json number without any exponent, between int64 min and max.
 - `DECIMAL_29_9` - a json number without an exponent, with up to 29 digits before the decimal point, and up to 9 after (aka BigQuery `NUMERIC`, with default decimal point position)
-- `DATE`* - date as a string, without a timezone
-- `DATETIME`* - date and time as a string, without a timezone
-- `TIME`* - time as a string, without a timezone
+- `DATE`* - date as a string, without a timezone, as `YYYY-MM-DD`, or `YYYY/MM/DD` or `YYYY.MM.DD`.
+- `TIME`* - time as a string, without a timezone, as `HH:MM:SS` (fractional seconds not supported currently)
+- `DATETIME`* - date and time as a string, without a timezone, as `YYYY-MM-DDTHH:MM::SS` (in the date part, `-` can be swapped for `/`, `.`).
 - `STRUCT` - a sub schema. In this case you need to provide a `"fields": [...]` property in the schema definition, with a list of sub fields. You can nest arbitrarily deeply, and/or use `REPEATED` mode if needed.
 - `ANY` - a unspecified blob of json (could be a scalar json value or a json array/object with arbitray depth).
 
@@ -230,4 +231,5 @@ it's always nice to hear from people who like your work ;)!
       one per message.
 - [ ] Provide some proper benchmarks using other tools.
 - [ ] Make sure x86 is sensibly optimised (so far focus has been on Arm Macs / Neon, though it should be ok on x86).
-- [ ] Implement a TIMESTAMP validator
+- [ ] Implement a TIMESTAMP validator (i.e with timezone), and have TIME support optional fractional seconds 
+- [ ] Implement BASE64 validator

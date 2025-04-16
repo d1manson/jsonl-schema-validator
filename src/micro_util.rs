@@ -635,7 +635,7 @@ mod tests {
     #[test]
     fn test_consume_within_range() {
         pub const QUOTED_DATE_LOWER: &[u8; 12] = b"\"0000-00-00\"";
-        pub const QUOTED_DATE_UPPER: &[u8; 12] = b"\"9999-19-39\"";
+        pub const QUOTED_DATE_UPPER: &[u8; 12] = b"\"9999/19/39\"";
 
 
         // non-string valid values consume zero
@@ -651,6 +651,12 @@ mod tests {
 
         // true
         assert_eq!(consume_within_range(&u8p!(b"\"2023-10-27\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), QUOTED_DATE_LOWER.len());
+        assert_eq!(consume_within_range(&u8p!(b"\"2023/10/27\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), QUOTED_DATE_LOWER.len());
+        assert_eq!(consume_within_range(&u8p!(b"\"2023.10.27\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), QUOTED_DATE_LOWER.len());  // '.' is a valid separator as it's the char between '-' and '/' in ascii
+        assert_eq!(consume_within_range(&u8p!(b"\"2023-10/27\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), QUOTED_DATE_LOWER.len());  // WARNING: a mixed delimiter string is still valid here
+        assert_eq!(consume_within_range(&u8p!(b"\"2023x10x27\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0);  // x is not a valid separator
+        
+        
         assert_eq!(consume_within_range(&u8p!(b"\"2023-09-01\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), QUOTED_DATE_LOWER.len());
         assert_eq!(consume_within_range(&u8p!(b"\"2023-10-39\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), QUOTED_DATE_LOWER.len()); // WARNING: 39th of October passes our relaxed check 
 

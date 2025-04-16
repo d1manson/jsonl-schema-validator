@@ -144,6 +144,7 @@ fn main() {
                 let result = validate(schema, next_field_idx-1, &line_u8p, &mut scratch);
                 let is_valid = result == ValidationResult::Valid;
                 if !is_valid {
+                    // WARNING: when there's more than one thread, we don't enforce any ordering of these logs
                     eprintln!("{line_num}: {result:?}");
                 }
                 
@@ -182,7 +183,7 @@ fn main() {
     for (is_valid, recyclable_string) in main_from_worker {
         // deal with error
         if !is_valid && args.exit_on_first_error {
-            process::exit(1);
+            process::exit(1); // WARNING: when there's more than one thread, we don't bother to enforce the ordering of this
         }
         err_count += !is_valid as usize;
         
