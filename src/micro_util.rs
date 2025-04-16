@@ -195,14 +195,16 @@ where simd::LaneCount<LANE_SIZE> : simd::SupportedLaneCount
             break;
         }
     }
-    // the remainder must be one of: {", =", ==", ==="}
+    // the remainder must be one of: {", =", =="}
     let remainder = json.offset(ret);
-    let n_padding = remainder.initial_lane::<4, 0>().simd_eq(Simd::<u8, 4>::splat(b'=')).to_bitmask().trailing_ones() as usize;
+    let remainder = remainder.raw_u8s();
+    // note for n_padding:1, it's possibly the wrong byte that's '=', but the if statement below will (amonst other things) invalidate that case 
+    let n_padding = (remainder[0] == b'=') as usize + (remainder[1] == b'=') as usize;
 
-    if (n_padding < 4) & (*remainder.raw_u8s().get(n_padding).unwrap_or(&0) == b'"') {
-        return ret + n_padding + 1 /* close quote */; 
+    if remainder[n_padding] == b'"' {
+        return ret + n_padding + 1 /* the quote */;
     } else {
-        return  0;
+        return 0;
     }
 
 }
@@ -936,9 +938,9 @@ mod tests {
     fn test_consume_base64(){
         assert_eq!(consume_base64(&u8p!(b"\"123456789\"   ")), 11);
         assert_eq!(consume_base64(&u8p!(b"\"123456789=\"   ")), 12);
+        assert_eq!(consume_base64(&u8p!(b"\"123456789 =\"   ")), 0);
         assert_eq!(consume_base64(&u8p!(b"\"123456789==\"   ")), 13);
-        assert_eq!(consume_base64(&u8p!(b"\"123456789===\"   ")), 14);
-        assert_eq!(consume_base64(&u8p!(b"\"123456789====\"   ")), 0);
+        assert_eq!(consume_base64(&u8p!(b"\"123456789===\"   ")), 0);
         assert_eq!(consume_base64(&u8p!(b"\"123456789?\"   ")), 0);
     }
 
