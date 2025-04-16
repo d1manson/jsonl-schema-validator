@@ -64,13 +64,13 @@ pub struct ByteOffset(usize);
 pub enum ValidationResult<'schema, 'json> {
     Valid,
     FieldUnrecognised(ByteOffset, &'json str),
-    FieldDuplicated,
+    FieldDuplicated(ByteOffset, &'schema str),
     RequiredFieldAbsent(ByteOffset, &'schema str),
-    RepeatedFieldIsNotArray,
-    ArrayContentsInvalid,
+    RepeatedFieldIsNotArray(ByteOffset, &'schema str),
+    ArrayContentsInvalid(ByteOffset, &'schema str),
     FieldValueInvalid(ByteOffset, &'schema str),
-    RequiredFieldIsNull,
-    NotAnObject
+    RequiredFieldIsNull(ByteOffset, &'schema str),
+    NotAnObject(ByteOffset)
 }
 
 /// The validate function needs some heap data, but we don't want to reallocate on every call, so we wrap it up with this
@@ -103,7 +103,7 @@ pub fn validate<'a, 'b>(root_schema: &'a AdaptivePrefixMap<Field>, max_field_idx
             // the body of the loop ends with j+= consume_punct() for the default case, and this also happens prior to the one "continue 'stack_loop" statement.
             let j_inc = micro_util::consume_punct::<b'{', false>(&json.offset(j));
             if j_inc == 0 {
-                return ValidationResult::NotAnObject; // this is still potentially spec-compliant JSON, but not meeting our schema's requirements
+                return ValidationResult::NotAnObject(ByteOffset(j)); // this is still potentially spec-compliant JSON, but not meeting our schema's requirements
             }
             j += j_inc;
             stack_entry.is_initialised = true;
@@ -127,7 +127,7 @@ pub fn validate<'a, 'b>(root_schema: &'a AdaptivePrefixMap<Field>, max_field_idx
 
             // Having duplicate keys in an object is, it seems, spec-compliant, so we have to assume there may be duplicates, which would be invalid for us
             if seen_field_by_idx[field.idx] {
-                return ValidationResult::FieldDuplicated;
+                return ValidationResult::FieldDuplicated(ByteOffset(j), &field.name);
             }
 
             seen_field_by_idx[field.idx] = true;
@@ -144,14 +144,14 @@ pub fn validate<'a, 'b>(root_schema: &'a AdaptivePrefixMap<Field>, max_field_idx
                 let j_inc_bra = micro_util::consume_punct::<b'[', false>(&json.offset(j));
                 if j_inc_null > 0 {
                     if field.mode == FieldMode::REQUIRED {
-                        return ValidationResult::RequiredFieldIsNull;
+                        return ValidationResult::RequiredFieldIsNull(ByteOffset(j), &field.name);
                     }
                     j += j_inc_null;
                 } else {
                     if field.mode == FieldMode::REPEATED {
                         // colon was last thing consumed, so if this consumes anything it can only be the actual punctuation we are looking for
                         if j_inc_bra == 0 {
-                            return ValidationResult::RepeatedFieldIsNotArray;
+                            return ValidationResult::RepeatedFieldIsNotArray(ByteOffset(j), &field.name);
                         } else {
                             // consume open array
                             j += j_inc_bra;
@@ -173,7 +173,7 @@ pub fn validate<'a, 'b>(root_schema: &'a AdaptivePrefixMap<Field>, max_field_idx
                     // A2. j_inc_bra != 0, j_inc_null == 0 (because starting from '[').
                     // A3. j_inc_bra == 0 && j_inc_null == 0, i.e. some other kind of non-array value.
                     if j_inc_bra + j_inc_null == 0 {
-                        return ValidationResult::RepeatedFieldIsNotArray; // Case A3.
+                        return ValidationResult::RepeatedFieldIsNotArray(ByteOffset(j), &field.name); // Case A3.
                     } else {
                         j += j_inc_bra; // Case A2 (for Case A1 this is a no-op, which is fine)
                         json_offset = json.offset(j);
@@ -241,12 +241,12 @@ pub fn validate<'a, 'b>(root_schema: &'a AdaptivePrefixMap<Field>, max_field_idx
                     // B3. j_inc_val == 0 (and j_inc_bra == 0 and j_inc_null == 0) because the array couldn't be fully consumed because of a type mismatch.
                     let j_inc_bra = micro_util::consume_punct::<b']', false>(&json.offset(j));
                     if j_inc_bra + j_inc_null == 0 {
-                        return ValidationResult::ArrayContentsInvalid; // Case B3.
+                        return ValidationResult::ArrayContentsInvalid(ByteOffset(j), &field.name); // Case B3.
                     } else {
                         j += j_inc_bra + j_inc_null; // Case B1 or B2
                     }
                 } else if field.mode == FieldMode::REQUIRED && j_inc_null > 0 {
-                    return ValidationResult::RequiredFieldIsNull;
+                    return ValidationResult::RequiredFieldIsNull(ByteOffset(j), &field.name);
                 } else if j_inc_val + j_inc_null == 0 {
                     return ValidationResult::FieldValueInvalid(ByteOffset(j), &field.name);
                 } else {

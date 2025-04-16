@@ -230,5 +230,4 @@ it's always nice to hear from people who like your work ;)!
       one per message.
 - [ ] Provide some proper benchmarks using other tools.
 - [ ] Make sure x86 is sensibly optimised (so far focus has been on Arm Macs / Neon, though it should be ok on x86).
-- [ ] Provide more info in all the error cases.
 - [ ] Implement a TIMESTAMP validator
