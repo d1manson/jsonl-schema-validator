@@ -212,13 +212,6 @@ pub fn consume_base64(json: &u8p) -> usize {
 }
 
 
-
-fn black_box_zero() -> usize {
-    // read_volatile here is a trick borrowed from criterion's black_box.
-    unsafe { std::ptr::read_volatile(&0) }
-}
-
-
 /// This assumes the json slice is the start of a spec-compliant value (not neccessarily a number value, but definitely compliant value).
 /// In this case we consider any number to be a valid float64 (it might be out of range, but I'll still call that valid for a float).
 /// 
@@ -292,19 +285,16 @@ pub fn consume_int64(json: &u8p) -> usize {
         let first_lt_bound_at = lt_bound_mask.to_bitmask().trailing_zeros() + 1;
         let first_gt_bound_at = gt_bound_mask.to_bitmask().trailing_zeros() + 1;
 
-        //println!("json={json:?} lt_bound_mask={1:b} ({first_lt_bound_at}) gt_bound_mask={2:b} ({first_gt_bound_at})",
-        //           lt_bound_mask.to_bitmask(), gt_bound_mask.to_bitmask());
-    
         if (first_gt_bound_at < first_lt_bound_at) & (first_gt_bound_at <= good_chars) {
-            valid_mask = black_box_zero();
+            valid_mask = hint::black_box(0);
         }
     
     }
     if good_chars > 19 + (has_sign as u32) {
-        valid_mask = black_box_zero();
+        valid_mask = hint::black_box(0);
     }
     if !check_next_char {
-        valid_mask = black_box_zero();
+        valid_mask = hint::black_box(0);
     }
     return good_chars as usize & valid_mask;
 
@@ -339,10 +329,10 @@ pub fn consume_decimal_29_9(json: &u8p) -> usize {
     let digits_mask_32_47 = data_32_47.simd_ge(u8x16::splat(b'.')) & data_32_47.simd_le(u8x16::splat(b'9'));
 
     let has_sign = json.raw_u8s()[0] == b'-';
-    let good_chars = ((has_sign as u64) | (digits_mask_0_31.to_bitmask() as u64) | ( (digits_mask_32_47.to_bitmask() as u64) << 32)) .trailing_ones();
+    let ret = ((has_sign as u64) | (digits_mask_0_31.to_bitmask() as u64) | ( (digits_mask_32_47.to_bitmask() as u64) << 32)) .trailing_ones() as usize;
     unsafe {
         // SAFETY: we only have data for 32+16 bytes, which we called .to_bitmask() on, so there's a max of 32+16<64 trailing_ones
-        hint::assert_unchecked(good_chars < 64);
+        hint::assert_unchecked(ret < 64);
     }
     let dp_at = dp_mask.to_bitmask().trailing_zeros() as u32 + 1;
 
@@ -352,40 +342,41 @@ pub fn consume_decimal_29_9(json: &u8p) -> usize {
 
     With a naive implementation, the compiler will optimise all the following logic into a branchelss set of instructions. Normally 
     branchless is a good thing, but it means we don't benefit from the magic of the CPU's branch predictor. So instead, we force the compiler
-    to use a real branch (via black_box_zero). This brings the CPU's branch predictor into the game. But the branch predictor can't do much
+    to use a real branch (via black_box(0)). This brings the CPU's branch predictor into the game. But the branch predictor can't do much
     if there are lots of instructions required to compute the if statement. So, instead we split up the if statement into lots of simpler
     if statements, allowing the branch predictor to do away with even more instructions.
+    This trick isn't always a good idea, but here it seems to be based on the benchmarks, whereas in the consume_time function it isn't.
     */
 
     let has_dp = dp_at < 65;
-    let check_left_without_dp = good_chars <= 29 + has_sign as u32;
-    let check_left_with_dp = dp_at <= 30 + has_sign as u32; 
-    let check_right_with_dp = good_chars <= dp_at + 9;
+    let check_left_without_dp = ret <= 29 + has_sign as usize;
+    let check_left_with_dp = dp_at as usize <= 30 + has_sign as usize; 
+    let check_right_with_dp = ret <= dp_at as usize + 9;
 
     // if 0 < good_chars <= 40, there are only two chars that can come after it - {e, E} - in valid json.
-    let check_next_char =  (json.raw_u8s()[good_chars as usize] != b'e') & (json.raw_u8s()[good_chars as usize] != b'E');
+    let check_next_char =  (json.raw_u8s()[ret] != b'e') & (json.raw_u8s()[ret] != b'E');
 
     let mut valid_mask : usize = 0xffff;
 
     if !check_next_char {
-        valid_mask = black_box_zero();
+        valid_mask = hint::black_box(0);
     }
 
     if !has_dp & !check_left_without_dp {
-        valid_mask = black_box_zero();
+        valid_mask = hint::black_box(0);
     } 
     
     if has_dp & !check_left_with_dp {
-        valid_mask = black_box_zero();
+        valid_mask = hint::black_box(0);
     } 
 
     if has_dp & !check_right_with_dp {
-        valid_mask = black_box_zero();
+        valid_mask = hint::black_box(0);
     } 
 
     //println!("json: {0} good_chars:{good_chars:?} check_e:{check_e:?} dp_at:{dp_at:?} check_left_without_dp:{check_left_without_dp:?}", padded_bytes_to_trimmed_string(json));
 
-    return good_chars as usize & valid_mask;
+    return ret & valid_mask;
     
     
 }

@@ -51,15 +51,15 @@ The supported types are inspired by - but not a perfect match to - BigQuery data
 - `FLOAT64` - any json number (details not validated).
 - `INT64` - a json number without any exponent, between int64 min and max.
 - `DECIMAL_29_9` - a json number without an exponent, with up to 29 digits before the decimal point, and up to 9 after (aka BigQuery `NUMERIC`, with default decimal point position)
+- `TIME` - time as a string, without a timezone. `HH:MM[:SS[.SSSSSS]]`
 - `DATE`* - date as a string, without a timezone, as `YYYY-MM-DD`, or `YYYY/MM/DD` or `YYYY.MM.DD`.
-- `TIME`* - time as a string, without a timezone. `HH:MM[:SS[.SSSSSS]]`
 - `DATETIME`* - date and time as a string, without a timezone, as `YYYY-MM-DDTHH:MM::SS` (in the date part, `-` can be swapped for `/`, `.`).
 - `BYTES` - a base64 string.
 - `STRUCT` - a sub schema. In this case you need to provide a `"fields": [...]` property in the schema definition, with a list of sub fields. You can nest arbitrarily deeply, and/or use `REPEATED` mode if needed.
 - `ANY` - a unspecified blob of json (could be a scalar json value or a json array/object with arbitray depth).
 
 
-*the datetime types aren't 100% watertight validators, e.g. `27:30` is treated as valid time, though `37:30` is not.
+*the date & datetime types aren't 100% watertight validators; day of the month can run from 1 to 39 for all months.
 
 
 ## Benchmarks
@@ -236,4 +236,4 @@ it's always nice to hear from people who like your work ;)!
       one per message.
 - [ ] Provide some proper benchmarks using other tools.
 - [ ] Make sure x86 is sensibly optimised (so far focus has been on Arm Macs / Neon, though it should be ok on x86).
-- [ ] Implement a TIMESTAMP validator (i.e with timezone), and have TIME support optional fractional seconds 
+- [ ] Improve the `DATETIME` validator's time part to work like the `TIME` validator. And implement a `TIMESTAMP` validator (i.e with timezone). 

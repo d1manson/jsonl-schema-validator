@@ -4,7 +4,7 @@ use std::simd::prelude::*;
 use std::simd::u8x16;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use rand::Rng;
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 #[path="../src/micro_util.rs"]
 mod micro_util;
@@ -329,9 +329,10 @@ fn consume_brackets(json: &[u8]) -> usize {
 
 fn criterion_benchmark(c: &mut Criterion) {
 
-    let mut rng = rand::rng();
+    let seed = b"a stable seed. better benchmarks"; // 32 byte seed required for seed. so each group is independently stable
 
     let mut group = c.benchmark_group("consume_float");
+    let mut rng = StdRng::from_seed(*seed);
     // build 10k float/null values
     let mut values: Vec<u8pOwned> = Vec::with_capacity(10000);
     for _ in 0..values.capacity() {
@@ -356,7 +357,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.bench_function("loop", |b| b.iter(|| consume_float_loop( black_box(&value_iter.next().unwrap().as_borrowed()))));   
     group.finish();
 
+
+
     let mut group = c.benchmark_group("consume_int64");
+    let mut rng = StdRng::from_seed(*seed);
     // build 10k int/null values (we don't include valid json numbers that are invalid ints here)
     let mut values: Vec<u8pOwned> = Vec::with_capacity(10000);
     for _ in 0..values.capacity() {
@@ -383,6 +387,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
 
     let mut group = c.benchmark_group("consume_decimal");
+    let mut rng = StdRng::from_seed(*seed);
     // build 10k numeric/null values (we don't include valid json numbers that are invalid numerics here)
     let mut values: Vec<u8pOwned> = Vec::with_capacity(10000);
     for _ in 0..values.capacity() {
@@ -428,7 +433,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.finish();
 
 
-    let mut group = c.benchmark_group("consume_colon");    
+
+    let mut group = c.benchmark_group("consume_colon");
+    let mut rng = StdRng::from_seed(*seed);
     let test_cases :Vec<&str>  = vec!("", ":x", ": x"," : x", "} ", " }  }");
     for test_case in test_cases {
         group.bench_function(format!("3 if statements \"{test_case}\""), |b| b.iter(|| consume_colon( black_box(test_case.as_bytes()))));
@@ -440,28 +447,26 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.finish();
 
 
+    let mut group = c.benchmark_group("consume_bool");
     let mut values: Vec<u8pOwned> = Vec::with_capacity(10000);
     let mut rng = rand::rng();
     for _ in 0..values.capacity() {
         values.push(if rng.random_bool(0.5) { u8pOwned::from(b"true   ") } else { u8pOwned::from(b"false   ") });
     }
     let mut value_iter = values.iter().cycle(); 
-
-    let mut group = c.benchmark_group("consume_bool");
     group.bench_function("basic: if statements rand", |b| b.iter(|| consume_bool( &value_iter.next().unwrap().as_borrowed())));
     group.bench_function("opt: if statements rand", |b| b.iter(|| micro_util::consume_bool( &value_iter.next().unwrap().as_borrowed())));
-    
     group.finish();
 
 
 
+    let mut group = c.benchmark_group("consume_string");
+    let mut rng = StdRng::from_seed(*seed);
     let mut values: Vec<u8pOwned> = Vec::with_capacity(10000);
     for _ in 0..values.capacity() {
         values.push(if rng.random_bool(0.5) { u8pOwned::from("\"something\"      ") } else { u8pOwned::from(b"\"at\\\"her\\\\\"        ")});
     }
     let mut value_iter = values.iter().cycle(); 
-
-    let mut group = c.benchmark_group("consume_string");
     group.bench_function("loop", |b| b.iter(|| consume_string_loop( &value_iter.next().unwrap().as_borrowed())));
     group.bench_function("simd", |b| b.iter(|| micro_util::consume_string( &value_iter.next().unwrap().as_borrowed())));
      
@@ -469,6 +474,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
 
     let mut group = c.benchmark_group("consume_json");
+    let mut rng = StdRng::from_seed(*seed);
     let mut values: Vec<u8pOwned> = Vec::with_capacity(10000);
     for _ in 0..values.capacity() {
         values.push(if rng.random_bool(0.5) { u8pOwned::from(b"{\"xx\":1,\"y\":{}}     ") } else {  u8pOwned::from(b"{\"y\":\"\\\"\",\"x\":3}     ") });
@@ -481,6 +487,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     
     let mut group = c.benchmark_group("is_odd_contiguous");
+    let mut rng = StdRng::from_seed(*seed);
     let mut values: Vec<u64> = Vec::with_capacity(10000);
     for _ in 0..values.capacity() {
         values.push(if rng.random_bool(1.0) { 8 } else { 12 });
@@ -494,7 +501,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     
 
     let mut group = c.benchmark_group("consume_time");
-    // build 10k int/null values (we don't include valid json numbers that are invalid ints here)
+    let mut rng = StdRng::from_seed(*seed);
     let mut values: Vec<u8pOwned> = Vec::with_capacity(10000);
     for _ in 0..values.capacity() {
         if rng.random_bool(0.1){
