@@ -13,6 +13,7 @@ pub enum FieldType {
     DATE, // no timezone
     DATETIME, // no timezone
     TIME, // no date or timezone
+    TIMESTAMP, // date & time, optionally with timezone
 
     BOOL,
     INT64,
@@ -29,7 +30,6 @@ pub enum FieldType {
     // INTERVAL
     // RANGE
     // BIGNUMERIC
-    // TIMESTAMP
 }
 
 
@@ -209,9 +209,12 @@ pub fn validate<'a, 'b>(root_schema: &'a AdaptivePrefixMap<Field>, max_field_idx
                             // WARNING: doesn't fully validate day of month
                             micro_util::consume_datetime(&json_offset)
                         },
+                        FieldType::TIMESTAMP => {
+                            micro_util::consume_timestamp(&json_offset)
+                        },
                         FieldType::BYTES => {
                             micro_util::consume_base64(&json_offset)
-                        }
+                        },
                         FieldType::ANY => {
                             micro_util::consume_json(&json_offset)
                         }

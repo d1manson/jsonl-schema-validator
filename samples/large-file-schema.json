@@ -75,7 +75,7 @@
     },
     {
         "name": "created_at",
-        "type": "STRING",
+        "type": "TIMESTAMP",
         "mode": "REQUIRED"
     },
     {

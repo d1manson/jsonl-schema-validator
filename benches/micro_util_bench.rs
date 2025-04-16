@@ -472,15 +472,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     let mut rng = StdRng::from_seed(*seed);
     let mut values: Vec<u8pOwned> = Vec::with_capacity(10000);
     for _ in 0..values.capacity() {
-        if rng.random_bool(0.1){
-            values.push(u8pOwned::from("null"));
-        } if rng.random_bool(0.4) {
-            values.push(u8pOwned::from("\"23:11\"  "));
-        } if rng.random_bool(0.5) {
-            values.push(u8pOwned::from("\"23:11:12.01\" "));
-        } else {
-            values.push(u8pOwned::from("\"23:11:12.0111\"  "));
-        }
+        values.push(u8pOwned::from(match rng.random_range(0..10) {
+            0 => "null",
+            1..4 => "\"23:11\"  ",
+            4..8 => "\"23:11:12.01\" ",
+            _ => "\"23:11:12.0111\"  "
+        }));
     }
     let mut value_iter = values.iter().cycle(); 
     group.bench_function("simd", |b| b.iter(|| micro_util::consume_time( black_box(&value_iter.next().unwrap().as_borrowed()))));
@@ -491,18 +488,37 @@ fn criterion_benchmark(c: &mut Criterion) {
     let mut rng = StdRng::from_seed(*seed);
     let mut values: Vec<u8pOwned> = Vec::with_capacity(10000);
     for _ in 0..values.capacity() {
-        if rng.random_bool(0.1){
-            values.push(u8pOwned::from("null"));
-        } if rng.random_bool(0.4) {
-            values.push(u8pOwned::from("\"2023-10-27T23:11\"  "));
-        } if rng.random_bool(0.5) {
-            values.push(u8pOwned::from("\"2023-10-27 23:11:12.01\" "));
-        } else {
-            values.push(u8pOwned::from("\"2023-10-27T23:11:12.0111\"  "));
-        }
+        values.push(u8pOwned::from(match rng.random_range(0..10) {
+            0 => "null",
+            1..4 => "\"2023-10-27T23:11\"  ",
+            4..8 => "\"2023-10-27 23:11:12.01\" ",
+            _ => "\"2023-10-27T23:11:12.0111\"  "
+        }));
     }
     let mut value_iter = values.iter().cycle(); 
     group.bench_function("simd", |b| b.iter(|| micro_util::consume_datetime( black_box(&value_iter.next().unwrap().as_borrowed()))));
+    group.finish();
+
+
+    let mut group = c.benchmark_group("consume_timestamp");
+    let mut rng = StdRng::from_seed(*seed);
+    let mut values: Vec<u8pOwned> = Vec::with_capacity(10000);
+    for _ in 0..values.capacity() {
+        values.push(u8pOwned::from(match rng.random_range(0..10) {
+            0 => "null",
+            1 => "\"2023-10-27T23:11\"  ",
+            2 => "\"2023-10-27T23:11z\"  ",
+            3 => "\"2023-10-27T23:11 UTC\"  ",
+            5 => "\"2023-10-27T23:11UTC\"  ",
+            6 => "\"2023-10-27 23:11:12.01\" ",
+            7 => "\"2023-10-27 23:11:12.01 +12:00\" ",
+            8 => "\"2023-10-27 23:11:12.01-11:30\" ",
+            9 => "\"2023-10-27T23:11:12.0111 +08:15\"  ",
+            _ => "\"2023-10-27T23:11:12.0111+08:15\"  "
+        }));
+    }
+    let mut value_iter = values.iter().cycle(); 
+    group.bench_function("simd", |b| b.iter(|| micro_util::consume_timestamp( black_box(&value_iter.next().unwrap().as_borrowed()))));
     group.finish();
 
 }

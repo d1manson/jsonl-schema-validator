@@ -54,6 +54,7 @@ The supported types are inspired by - but not a perfect match to - BigQuery data
 - `TIME` - time as a string, without a timezone. `HH:MM[:SS[.SSSSSS]]`
 - `DATE`* - date as a string, without a timezone, as `YYYY-MM-DD`, or `YYYY/MM/DD` or `YYYY.MM.DD`.
 - `DATETIME`* - date and time as a string, without a timezone, as `YYYY-MM-DDTHH:MM[:SS[.SSSSSS]]`; in the date part, `-` can be swapped for `/`, `.`; and the `T` can also be swapped for a space.
+- `TIMESTAMP`* - same as `DATETIME`, but with an optional timestamp suffix, which is an optional space followed by `Z`/`z`/`UTC`/`+-HH:MM`.
 - `BYTES` - a base64 string.
 - `STRUCT` - a sub schema. In this case you need to provide a `"fields": [...]` property in the schema definition, with a list of sub fields. You can nest arbitrarily deeply, and/or use `REPEATED` mode if needed.
 - `ANY` - a unspecified blob of json (could be a scalar json value or a json array/object with arbitray depth).
@@ -224,7 +225,10 @@ strictly-greater-than byte. The positions of these two bytes can be found using 
 ## Why?
 
 I wanted to learn Rust and get stuck into some hyper optimisation fun after having worked much higher up in the stack for a 
-few years.  If you find the tool useful, or any of the ideas interesting, do let me know - I've licenced it permissively but 
+few years.  The initial plan was to build a schema autodetect tool to rival BigQuery's one, but I only got as far as building the 
+validation logic here.
+
+If you find the tool useful, or any of the ideas interesting, do let me know - I've licenced it permissively but 
 it's always nice to hear from people who like your work ;)!
 
 ## TODOs
@@ -234,6 +238,6 @@ it's always nice to hear from people who like your work ;)!
       levels). This will presumably require implementing benchmarks for the function too.
 - [ ] Examine the thread pool performance carefully, to see if there are any imrpovements to be had, e.g. batches of lines rather than
       one per message.
-- [ ] Provide some proper benchmarks using other tools.
+- [ ] Provide some proper benchmarks using other tools, maybe review their code to see what we're doing differently here as there are
+      some SIMD JSON things out there already.
 - [ ] Make sure x86 is sensibly optimised (so far focus has been on Arm Macs / Neon, though it should be ok on x86).
-- [ ] Implement a `TIMESTAMP` validator (i.e with timezone). 

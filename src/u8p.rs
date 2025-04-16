@@ -103,6 +103,23 @@ impl<'a> u8p<'a> {
         }
         Simd::<u8, LANE_SIZE>::from_slice(&self.buffer[OFFSET..OFFSET + LANE_SIZE])
     }
+
+        /// This is guaranteed to not panic, so long as the `offset` never exceeds the `MAX_OFFSET`, but it could be all or partly zero padding.
+        /// This allows for the offset to be dynamically set, but still enforce a maximum offset. You may wish to add an 
+        /// `unsafe { hint::assert_aunchecked(offset <= MAX_OFFSET) }` before calling this function, so the compiler can remove the potential 
+        /// panic here (though the compiler is pretty clever, so may have worked that out without help!).
+        pub fn initial_lane_bounded<const LANE_SIZE: usize, const MAX_OFFSET: usize>(&self, offset: usize) -> Simd<u8, LANE_SIZE>
+        where LaneCount<LANE_SIZE>: SupportedLaneCount
+        {
+            assert!(MAX_OFFSET + LANE_SIZE <= Self::PADDING_SIZE);
+            assert!(offset <= MAX_OFFSET); // see comment in docstring suggesting the caller hints to the compiler that this isn't required
+            unsafe {
+                // SAFETY: offset + LANE_SIZE <= MAX_OFFSET + LANE_SIZE <= PADDING_SIZE <= self.buffer.len()
+                //         the first two inequalities are enforced by the assertions above, the last inequality is emforced when constructing u8p's.                
+                hint::assert_unchecked(offset + LANE_SIZE <= self.buffer.len());
+            }
+            Simd::<u8, LANE_SIZE>::from_slice(&self.buffer[offset..offset + LANE_SIZE])
+        }
 }
 
 impl<'a> Deref for u8p<'a> {

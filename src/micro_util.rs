@@ -184,12 +184,12 @@ pub fn consume_float(json: &u8p) -> usize {
     // but '+' and 'e' can't be included without overlapping with the chars we want to exclude.
 
     for (offset, data) in json.iter_lanes::<16>()   {
-        let good_mask = data.simd_eq(u8x16::splat(b'+'))
+        let matched = data.simd_eq(u8x16::splat(b'+'))
                                     | (data.simd_ge(u8x16::splat(b'-')) & data.simd_le(u8x16::splat(b'E'))) 
                                     | data.simd_eq(u8x16::splat(b'e'));
-        let good_chars = good_mask.to_bitmask().trailing_ones();
-        if good_chars < 16 {
-            return offset + good_chars as usize;
+        let matched = matched.to_bitmask();
+        if matched & 0xff_ff != 0xff_ff {
+            return offset + matched.trailing_ones() as usize;
         }
     }
     return 0; // shouldn't be possible in a valid json string to reach here
@@ -209,54 +209,29 @@ pub fn consume_float(json: &u8p) -> usize {
 /// TODO: if only 16 lanes are supported, it would probably be worth having a version of this that only conditionally does the
 ///       second lanes. I haven't done that yet as I couldn't work out how to write it conscisely to include the length 19 logic too.
 pub fn consume_int64(json: &u8p) -> usize {
-    const INT64_MAX: &[u8; 19] = b"9223372036854775807";
-    const INT64_MIN: &[u8; 20] = b"-9223372036854775808";
+    // The heart of this function is a range check, but there are a few additional things to take care of.
+    let mut checks_pass = true;
 
-    let data = json.initial_lane::<32,0>();
-    let digits_mask = data.simd_ge(u8x32::splat(b'0')) & data.simd_le(u8x32::splat(b'9'));
+    let json_32 = json.initial_lane::<32,0>();
+    let digits_mask = json_32.simd_ge(u8x32::splat(b'0')) & json_32.simd_le(u8x32::splat(b'9'));
    
     let has_sign = json.raw_u8s()[0] == b'-';
-    let good_chars = ((has_sign as u64) | (digits_mask.to_bitmask() as u64)) .trailing_ones();
-    let idx = good_chars as usize;
-    unsafe {
-        // SAFETY: we started with 32 bytes, then called .to_bitmask(), so there's a max of 32 trailing_ones
-        hint::assert_unchecked(good_chars < 64);
-    }
+    let ret = ((has_sign as u64) | (digits_mask.to_bitmask() as u64)) .trailing_ones() as usize;
+
     // if 0 < good_chars <= 20, there are only three chars that can come after it - {e, E, .} - in valid json.
-    let check_next_char = (json.raw_u8s()[idx] != b'e') & (json.raw_u8s()[idx] != b'E') & (json.raw_u8s()[idx] != b'.');
-     
-    let mut valid_mask : usize = 0xffff;
-
-    if good_chars == 19 + (has_sign as u32) {
-        let mut buffer= [0; 32];
-        buffer[..19].copy_from_slice(INT64_MAX);
-        let int64_max_vec = u8x32::from_slice(&buffer);
-
-        let mut buffer = [0; 32];
-        buffer[..20].copy_from_slice(INT64_MIN);
-        let int64_min_vec = u8x32::from_slice(&buffer[..]);
-
-        let bound = [int64_max_vec, int64_min_vec][has_sign as usize];
-        
-        let lt_bound_mask = data.simd_lt(bound);
-        let gt_bound_mask = data.simd_gt(bound);
-
-        let first_lt_bound_at = lt_bound_mask.to_bitmask().trailing_zeros() + 1;
-        let first_gt_bound_at = gt_bound_mask.to_bitmask().trailing_zeros() + 1;
-
-        if (first_gt_bound_at < first_lt_bound_at) & (first_gt_bound_at <= good_chars) {
-            valid_mask = hint::black_box(0);
-        }
+    checks_pass &= (json.raw_u8s()[ret] != b'e') & (json.raw_u8s()[ret] != b'E') & (json.raw_u8s()[ret] != b'.');
     
+    if ret == 19 + (has_sign as usize) {
+        let int64_max_vec = u8x32::from(*b"9223372036854775807\0\0\0\0\0\0\0\0\0\0\0\0\0");
+        let int64_min_vec = u8x32::from(* b"-9223372036854775808\0\0\0\0\0\0\0\0\0\0\0\0");
+        let bound = [int64_max_vec, int64_min_vec][has_sign as usize];
+        let first_lt_bound_at = json_32.simd_lt(bound).to_bitmask().trailing_zeros() + 1;
+        let first_gt_bound_at = json_32.simd_gt(bound).to_bitmask().trailing_zeros() + 1;
+        checks_pass &= (first_gt_bound_at > first_lt_bound_at) | (first_gt_bound_at as usize > ret);    
     }
-    if good_chars > 19 + (has_sign as u32) {
-        valid_mask = hint::black_box(0);
-    }
-    if !check_next_char {
-        valid_mask = hint::black_box(0);
-    }
-    return good_chars as usize & valid_mask;
+    checks_pass &= ret <= 19 + (has_sign as usize);
 
+    return if checks_pass { ret } else { 0 };
 }
 
 
@@ -278,66 +253,30 @@ pub fn consume_int64(json: &u8p) -> usize {
 ///       WARNING: this is a tiny bit too relaxed as the 77th digit is only partialy supported by BQ.
 ///       Maybe suoport customizing the numbers at run time - BQ does support fixing the decimal point in different places.
 pub fn consume_decimal_29_9(json: &u8p) -> usize {
+    // The heart of this function is a range check, but there are a few additional things to take care of.
+    let mut checks_pass = true;
+    let json_0_31 = json.initial_lane::<32,0>();
+    let json_32_47 = json.initial_lane::<16,32>();
 
-    let data_0_31 = json.initial_lane::<32,0>();
-    let data_32_47 = json.initial_lane::<16,32>();
-
-    let dp_mask = data_0_31.simd_eq(u8x32::splat(b'.')); // decimal place must be within first 32 chars
+    let dp_mask = json_0_31.simd_eq(u8x32::splat(b'.')); // decimal place must be within first 32 chars
      // in ascii, '.' is just before '0' (actually there's '\' in between, but that wouldn't be valid json so we can ignore it)
-    let digits_mask_0_31 = data_0_31.simd_ge(u8x32::splat(b'.')) & data_0_31.simd_le(u8x32::splat(b'9'));
-    let digits_mask_32_47 = data_32_47.simd_ge(u8x16::splat(b'.')) & data_32_47.simd_le(u8x16::splat(b'9'));
+    let digits_mask_0_31 = json_0_31.simd_ge(u8x32::splat(b'.')) & json_0_31.simd_le(u8x32::splat(b'9'));
+    let digits_mask_32_47 = json_32_47.simd_ge(u8x16::splat(b'.')) & json_32_47.simd_le(u8x16::splat(b'9'));
 
     let has_sign = json.raw_u8s()[0] == b'-';
     let ret = ((has_sign as u64) | (digits_mask_0_31.to_bitmask() as u64) | ( (digits_mask_32_47.to_bitmask() as u64) << 32)) .trailing_ones() as usize;
-    unsafe {
-        // SAFETY: we only have data for 32+16 bytes, which we called .to_bitmask() on, so there's a max of 32+16<64 trailing_ones
-        hint::assert_unchecked(ret < 64);
-    }
+    checks_pass &= json.raw_u8s()[ret] | 0x20 != b'e'; // if 0 < good_chars <= 40, there are only two chars that can come after it - {e, E} - in valid json.
+
     let dp_at = dp_mask.to_bitmask().trailing_zeros() as u32 + 1;
-
-    /*
-    At this point we know good_chars, and in the happy path we simply want to return that asap.
-    In the unhappy path we have a JSON-compatible number that doesn't meet our criteria, and we return zero. But that can be a bit slower.
-
-    With a naive implementation, the compiler will optimise all the following logic into a branchelss set of instructions. Normally 
-    branchless is a good thing, but it means we don't benefit from the magic of the CPU's branch predictor. So instead, we force the compiler
-    to use a real branch (via black_box(0)). This brings the CPU's branch predictor into the game. But the branch predictor can't do much
-    if there are lots of instructions required to compute the if statement. So, instead we split up the if statement into lots of simpler
-    if statements, allowing the branch predictor to do away with even more instructions.
-    This trick isn't always a good idea, but here it seems to be based on the benchmarks, whereas in the consume_time function it isn't.
-    */
-
     let has_dp = dp_at < 65;
     let check_left_without_dp = ret <= 29 + has_sign as usize;
+    checks_pass &= has_dp | check_left_without_dp;
+
     let check_left_with_dp = dp_at as usize <= 30 + has_sign as usize; 
     let check_right_with_dp = ret <= dp_at as usize + 9;
+    checks_pass &= !has_dp | (check_left_with_dp & check_right_with_dp);
 
-    // if 0 < good_chars <= 40, there are only two chars that can come after it - {e, E} - in valid json.
-    let check_next_char =  (json.raw_u8s()[ret] != b'e') & (json.raw_u8s()[ret] != b'E');
-
-    let mut valid_mask : usize = 0xffff;
-
-    if !check_next_char {
-        valid_mask = hint::black_box(0);
-    }
-
-    if !has_dp & !check_left_without_dp {
-        valid_mask = hint::black_box(0);
-    } 
-    
-    if has_dp & !check_left_with_dp {
-        valid_mask = hint::black_box(0);
-    } 
-
-    if has_dp & !check_right_with_dp {
-        valid_mask = hint::black_box(0);
-    } 
-
-    //println!("json: {0} good_chars:{good_chars:?} check_e:{check_e:?} dp_at:{dp_at:?} check_left_without_dp:{check_left_without_dp:?}", padded_bytes_to_trimmed_string(json));
-
-    return ret & valid_mask;
-    
-    
+    return if checks_pass { ret } else { 0 };
 }
 
 
@@ -350,40 +289,36 @@ pub fn consume_date(json: &u8p) -> usize {
     let lower = u8x16::from(*b"\"0000-00-00\"\0\0\0\0");
     let upper = u8x16::from(*b"\"9999/19/39\"\0\0\0\0"); 
 
-    let data = json.initial_lane::<16,0>();
-    let matched = data.simd_le(upper) & data.simd_ge(lower);
+    let json_16 = json.initial_lane::<16,0>();
+    let matched = (json_16.simd_le(upper) & json_16.simd_ge(lower)).to_bitmask();
+    let checks_pass = matched & 0b1111_1111_1111 == 0b1111_1111_1111;
     // TODO: at least validate month is 01 - 12, not 00 - 19 (DD is harder to deal with)
-    if matched.to_bitmask() & 0b1111_1111_1111 == 0b1111_1111_1111 {
-        return 12;
-    } else {
-        return 0
-    }
+
+    return if checks_pass { 12 } else { 0 };
 }
 
 
 /// This assumes the json slice is the start of a spec-compliant value (not neccessarily a time string, but definitely compliant value).
 /// For a string of the form: `HH:MM[:SS[.SSSSSS]]` it returns the number of bytes, including the start and end double quotes, otherwise zero.
 pub fn consume_time(json: &u8p) -> usize {
+    // The heart of this function is a range check, but there are a few additional things to take care of.
+    let mut checks_pass = true;
     let lower = u8x16::from(*b"\"00:00:00.000000");
     let upper = u8x16::from(*b"\"29:59:59.999999");
 
-    let data = json.initial_lane::<16, 0>();
-    let matched  =  data.simd_le(upper) & data.simd_ge(lower);
-    let mut ret = matched.to_bitmask().trailing_ones() as usize;
-    let json = json.raw_u8s();
+    let json_16 = json.initial_lane::<16, 0>();
+    let json_u8s = json.raw_u8s();
 
-    let next_char = json.get(ret).unwrap_or(&0);
+    checks_pass &= (json_u8s[1] < b'2') | (json_u8s[2] <= b'3'); // valid hours are 00 to 23
+
+    let matched  =  json_16.simd_le(upper) & json_16.simd_ge(lower);
+    let mut ret = matched.to_bitmask().trailing_ones() as usize;
+    checks_pass &= (ret == 6) | (ret >= 9); // seconds is optional; if present must be at least ':SS'
+
+    checks_pass &= json_u8s[ret] == b'"';
     ret += 1; // add closing quote
 
-    let check1= *next_char == b'"';
-    let check2 = (ret == "\"00:00\"".len()) | (ret >= b"\"00:00:00\"".len());
-    let check3 = (json[1] < b'2') | (json[2] <= b'3');
-
-    if check1 && check2 && check3 {
-        return ret;
-    } else {
-        return 0;
-    }
+    return if checks_pass { ret } else { 0 };
 }
 
 /// This assumes the json slice is the start of a spec-compliant value (not neccessarily a datetime string, but definitely compliant value).
@@ -391,28 +326,76 @@ pub fn consume_time(json: &u8p) -> usize {
 /// It returns the number of bytes, including the start and end double quotes, otherwise zero. 
 /// Note that the DD is not properly validated, it can be anything from 00 to 39.
 pub fn consume_datetime(json: &u8p) -> usize {
+    // The heart of this function is a range check, but there are a few additional things to take care of.
+    let mut checks_pass = true;
     let lower = u8x32::from(*b"\"0000-00-00 00:00:00.000000\0\0\0\0\0");
     let upper = u8x32::from(*b"\"9999/19/39T29:59:59.999999\0\0\0\0\0");
 
-    let data = json.initial_lane::<32, 0>();
-    let matched  =  data.simd_le(upper) & data.simd_ge(lower);
-    let mut ret = matched.to_bitmask().trailing_ones() as usize;
-    let json = json.raw_u8s();
+    let json_32 = json.initial_lane::<32, 0>();
+    let json_u8s = json.raw_u8s();
 
-    let next_char = json.get(ret).unwrap_or(&0);
-    ret += 1; // add closing quote
-
-    let check1= *next_char == b'"';
-    let check2 = (json[11] == b' ') | (json[11] == b'T'); // initially we allowed any ascii from ' ' to 'T', but we just one one or the other
-    let check3 = (ret == 18) | (ret >= 21);
-    let check4 = (json[12] < b'2') | (json[13] <= b'3'); 
+    checks_pass &= (json_u8s[11] == b' ') | (json_u8s[11] == b'T'); // separator is ' '  or 'T'
+    checks_pass &= (json_u8s[12] < b'2') | (json_u8s[13] <= b'3'); // valid hours are 00 to 23
     // TODO: at least validate month is 01 - 12, not 00 - 19 (DD is harder to deal with)
 
-    if check1 && check2 && check3 && check4 {
-        return ret;
-    } else {
-        return 0;
+    let matched  =  json_32.simd_le(upper) & json_32.simd_ge(lower);
+    let mut ret = matched.to_bitmask().trailing_ones() as usize;
+    checks_pass &= (ret == 17) | (ret >= 20); // seconds is optional; if present must be at least ':SS'
+    
+    checks_pass &= json_u8s[ret] == b'"';
+    ret += 1; // add closing quote
+
+    return if checks_pass { ret } else { 0 };
+}
+
+/// This assumes the json slice is the start of a spec-compliant value (not neccessarily a datetime string, but definitely compliant value).
+/// For a string of the form: `YYYY-MM-DDTHH:MM[:SS[.SSSSSS]]`. The '-' in the date can also be '\' or '.', and the `T` can also be a space.
+/// It returns the number of bytes, including the start and end double quotes, otherwise zero. 
+/// Note that the DD is not properly validated, it can be anything from 00 to 39.
+#[inline(never)]
+pub fn consume_timestamp(json: &u8p) -> usize {
+    // The heart of this function is a range check, but there are a few additional things to take care of.
+    let mut checks_pass = true;
+    let lower = u8x32::from(*b"\"0000-00-00 00:00:00.000000\0\0\0\0\0");
+    let upper = u8x32::from(*b"\"9999/19/39T29:59:59.999999\0\0\0\0\0");
+
+    let json_32 = json.initial_lane::<32, 0>();
+    let json_u8s = json.raw_u8s();
+
+    checks_pass &= (json_u8s[11] == b' ') | (json_u8s[11] == b'T'); // separator is ' '  or 'T'
+    checks_pass &= (json_u8s[12] < b'2') | (json_u8s[13] <= b'3'); // valid hours are 00 to 23
+    // TODO: at least validate month is 01 - 12, not 00 - 19 (DD is harder to deal with)
+    
+    let matched = json_32.simd_le(upper) & json_32.simd_ge(lower);
+    let mut ret = matched.to_bitmask().trailing_ones() as usize;
+    checks_pass &= (ret == 17) | (ret >= 20); // seconds is optional; if present must be at least ':SS'
+
+    // timezone part is a bit of a pain given there are so many options, but we still implement it branchless
+    if json_u8s[ret] == b' ' {
+        ret += 1;
     }
+
+    let tz_start = ret;
+    let tz_first_char = json_u8s[tz_start];
+
+    let tz_is_z = (tz_first_char | 0x20) == b'z';
+    ret += tz_is_z as usize * 1;
+    let tz_is_utc = (tz_first_char | 0x20) == b'u';
+    ret += tz_is_utc as usize * 3;
+    let tz_is_hm = (tz_first_char == b'+') | (tz_first_char == b'-');
+    ret += tz_is_hm as usize * 6;
+
+    checks_pass &= json_u8s[ret] == b'"';
+    ret += 1; // add closing quote    
+    
+    let check_utc =  (json_u8s[tz_start+1] | 0x20 == b't') & (json_u8s[tz_start+2] | 0x20 == b'c');
+    checks_pass &= !tz_is_utc | check_utc;
+
+    let json_hm = json.initial_lane_bounded::<8, 33>(tz_start);
+    let check_hm =  ((json_hm.simd_ge(u8x8::from(*b"+00:00\0\0")) & json_hm.simd_le(u8x8::from(*b"-19:59\0\0"))).to_bitmask() & 0b11_1111) == 0b11_1111;    
+    checks_pass &= !tz_is_hm | check_hm;
+    
+    return if checks_pass { ret } else { 0 };
 }
 
 
@@ -747,6 +730,8 @@ mod tests {
         assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27\"   ")), 0);
         assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45\"   ")), 18);
         assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45 \"   ")), 0);
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:0\"   ")), 0);
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45:0\"   ")), 0);
         assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45:08\"   ")), 21);
         assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27 12:45:08\"   ")), 21);
         assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T23:45:08\"   ")), 21);
@@ -757,6 +742,59 @@ mod tests {
         assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45:08.012345\"   ")), 28);
         assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45:08.0123456\"   ")), 0);
         assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45:08x0123456\"   ")), 0);
+    }
+
+
+
+    #[test]
+    fn test_consume_timestamp(){
+        assert_eq!(consume_timestamp(&u8p!(b"null")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"true")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"false")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"1")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"-1")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"[false]")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"{false}")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"\"hello\"")), 0);
+
+        // no tz
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27\"   ")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45\"   ")), 18);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45 \"   ")), 19); // WARNING: we allow through a space without a tz
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:0\"   ")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45:0\"   ")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45:08\"   ")), 21);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27 12:45:08\"   ")), 21);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T23:45:08\"   ")), 21);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T33:45:08\"   ")), 0); // 33 hrs in a day..no
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T24:45:08\"   ")), 0); // 24 o'clock is the next day, so no
+        
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45:08.0123\"   ")), 26);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45:08.012345\"   ")), 28);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45:08.0123456\"   ")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45:08x0123456\"   ")), 0);
+
+        // with tz as z/utc
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45Z\"   ")), 19);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45Z \"   ")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45 Z\"   ")), 20);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45 z\"   ")), 20);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45UTC\"   ")), 21);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45 UTC\"   ")), 22);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45 utc\"   ")), 22);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45 u_c\"   ")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45 utc \"   ")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45 z \"   ")), 0);
+
+        // with tz as number
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45+12:34\"   ")), 24);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45-12:34\"   ")), 24);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45 +12:34\"   ")), 25);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45+12:34 \"   ")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45+12:3\"   ")), 0);
+        assert_eq!(consume_timestamp(&u8p!(b"\"2023-10-27T12:45+12:3_\"   ")), 0);
+
+
     }
 
 
