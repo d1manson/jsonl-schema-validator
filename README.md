@@ -52,7 +52,7 @@ The supported types are inspired by - but not a perfect match to - BigQuery data
 - `INT64` - a json number without any exponent, between int64 min and max.
 - `DECIMAL_29_9` - a json number without an exponent, with up to 29 digits before the decimal point, and up to 9 after (aka BigQuery `NUMERIC`, with default decimal point position)
 - `DATE`* - date as a string, without a timezone, as `YYYY-MM-DD`, or `YYYY/MM/DD` or `YYYY.MM.DD`.
-- `TIME`* - time as a string, without a timezone, as `HH:MM:SS` (fractional seconds not supported currently)
+- `TIME`* - time as a string, without a timezone. `HH:MM[:SS[.SSSSSS]]`
 - `DATETIME`* - date and time as a string, without a timezone, as `YYYY-MM-DDTHH:MM::SS` (in the date part, `-` can be swapped for `/`, `.`).
 - `BYTES` - a base64 string.
 - `STRUCT` - a sub schema. In this case you need to provide a `"fields": [...]` property in the schema definition, with a list of sub fields. You can nest arbitrarily deeply, and/or use `REPEATED` mode if needed.

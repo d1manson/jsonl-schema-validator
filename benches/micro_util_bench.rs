@@ -492,6 +492,25 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.finish();
 
     
+
+    let mut group = c.benchmark_group("consume_time");
+    // build 10k int/null values (we don't include valid json numbers that are invalid ints here)
+    let mut values: Vec<u8pOwned> = Vec::with_capacity(10000);
+    for _ in 0..values.capacity() {
+        if rng.random_bool(0.1){
+            values.push(u8pOwned::from("null"));
+        } if rng.random_bool(0.4) {
+            values.push(u8pOwned::from("\"23:11\"  "));
+        } if rng.random_bool(0.5) {
+            values.push(u8pOwned::from("\"23:11:12.01\" "));
+        } else {
+            values.push(u8pOwned::from("\"23:11:12.0111\"  "));
+        }
+    }
+    let mut value_iter = values.iter().cycle(); 
+    group.bench_function("simd", |b| b.iter(|| micro_util::consume_time( black_box(&value_iter.next().unwrap().as_borrowed()))));
+    group.finish();
+
 }
 
 criterion_group!(benches, criterion_benchmark);

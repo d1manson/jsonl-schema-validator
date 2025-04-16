@@ -390,6 +390,33 @@ pub fn consume_decimal_29_9(json: &u8p) -> usize {
     
 }
 
+
+
+/// This assumes the json slice is the start of a spec-compliant value (not neccessarily a time string, but definitely compliant value).
+/// For a string of the form: `HH:MM[:SS[.SSSSSS]]` it returns the number of bytes, including the start and end double quotes, otherwise zero.
+pub fn consume_time(json: &u8p) -> usize {
+    let lower = u8x16::from(*b"\"00:00:00.000000");
+    let upper = u8x16::from(*b"\"29:59:59.999999");
+
+    let data = json.initial_lane::<16, 0>();
+    let matched  =  data.simd_le(upper) & data.simd_ge(lower);
+    let mut ret = matched.to_bitmask().trailing_ones() as usize;
+    let next_char = json.raw_u8s().get(ret).unwrap_or(&0);
+    ret += 1; // add closing quote
+
+    let check1= *next_char == b'"';
+    let check2 = (ret == "\"00:00\"".len()) | (ret >= b"\"00:00:00\"".len());
+    let check3 = (json.raw_u8s()[1] < b'2') | (json.raw_u8s()[2] <= b'3');
+
+    if check1 && check2 && check3 {
+        return ret;
+    } else {
+        return 0;
+    }
+}
+
+
+
 /// Assumes json is valid, and is the start of a value of some kind. If it is the start of an array, it
 /// finds the matching end of the array, and similarlly for start/end of objects, returning the number of
 /// bytes needed to get to the end. For true/false, strings and numbers it will return the byte count (by making
@@ -680,6 +707,30 @@ mod tests {
         assert_eq!(consume_punct::<b'}', true>(&u8p!(b"}} ")), 1);
         assert_eq!(consume_punct::<b'}', true>(&u8p!(b"}\t} ")), 2);
         assert_eq!(consume_punct::<b'}', true>(&u8p!(b"}\t } ")), 3);
+    }
+
+    #[test]
+    fn test_consume_time(){
+        assert_eq!(consume_time(&u8p!(b"null")), 0);
+        assert_eq!(consume_time(&u8p!(b"true")), 0);
+        assert_eq!(consume_time(&u8p!(b"false")), 0);
+        assert_eq!(consume_time(&u8p!(b"1")), 0);
+        assert_eq!(consume_time(&u8p!(b"-1")), 0);
+        assert_eq!(consume_time(&u8p!(b"[false]")), 0);
+        assert_eq!(consume_time(&u8p!(b"{false}")), 0);
+        assert_eq!(consume_time(&u8p!(b"\"hello\"")), 0);
+
+
+        assert_eq!(consume_time(&u8p!(b"\"12:45\"   ")), 7);
+        assert_eq!(consume_time(&u8p!(b"\"12:45:08\"   ")), 10);
+        assert_eq!(consume_time(&u8p!(b"\"23:45:08\"   ")), 10);
+        assert_eq!(consume_time(&u8p!(b"\"33:45:08\"   ")), 0); // 33 hrs in a day..no
+        assert_eq!(consume_time(&u8p!(b"\"24:45:08\"   ")), 0); // 24 o'clock is the next day, so no
+        
+        assert_eq!(consume_time(&u8p!(b"\"12:45:08.0123\"   ")), 15);
+        assert_eq!(consume_time(&u8p!(b"\"12:45:08.012345\"   ")), 17);
+        assert_eq!(consume_time(&u8p!(b"\"12:45:08.0123456\"  ")), 0);
+        assert_eq!(consume_time(&u8p!(b"\"12:45:08x0123\"  ")), 0);
     }
 
     #[test]
