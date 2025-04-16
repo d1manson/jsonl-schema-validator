@@ -1,16 +1,22 @@
-# json-schema-validator
+# json-schema-validator 
 
-A command line utility written in Rust to validate json-newline files against a schema, fast.
+A command line utility, `jsonsv`, written in Rust to validate json-newline files against a schema, fast.
 
-This tool **does not validate that the json is spec-compliant**, rather it validates that the json matches a custom schema.
+This tool **does not validate that the json is [spec](https://www.json.org/json-en.html)-compliant**, rather it validates that the json matches a 
+custom schema, i.e. with keys that have values of specific types (string, INT64, date string etc.).
 
-Test, and then install the `jsonsv` cli util with:
+## Installing
+
+Binaries are provided in the [Github releases](https://github.com/d1manson/jsonl-schema-validator/releases) for Windows, ARM Macs, and Linux, but
+if you have [cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html) on your machine it's probably best to checkout the code 
+and then test and install it with:
 
 ```bash
 cargo test
 cargo install --path .  
 ```
 
+## Usage
 Define a schema in a json file like this:
 
 ```json
@@ -224,6 +230,5 @@ it's always nice to hear from people who like your work ;)!
       one per message.
 - [ ] Provide some proper benchmarks using other tools.
 - [ ] Make sure x86 is sensibly optimised (so far focus has been on Arm Macs / Neon, though it should be ok on x86).
-- [ ] Publish it somewhere, to encourage people to actually use it for real.
 - [ ] Provide more info in all the error cases.
 - [ ] Implement a TIMESTAMP validator
