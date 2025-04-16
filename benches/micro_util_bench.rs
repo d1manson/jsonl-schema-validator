@@ -14,13 +14,6 @@ mod u8p;
 
 use u8p::u8pOwned;
 
-
-const QUOTED_DATE_LOWER: &[u8; 12] = b"\"0000-00-00\"";
-const QUOTED_DATE_UPPER: &[u8; 12] = b"\"9999-19-39\""; 
-const QUOTED_DATETIME_LOWER: &[u8; 21] = b"\"0000-00-00T00:00:00\""; 
-const QUOTED_DATETIME_UPPER: &[u8; 21] = b"\"9999-19-39T29:59:59\""; 
-
-
 fn is_quoted_date_ifs(json: &[u8]) -> bool {
     if json.len() < 12 {
         return false;
@@ -121,13 +114,6 @@ fn is_quoted_time_ifs(json: &[u8]) -> bool {
 }
 
 
-fn consume_quoted_date_generic(json: &u8p::u8p) -> usize {
-    micro_util::consume_within_range(json, QUOTED_DATE_LOWER, QUOTED_DATE_UPPER)
-}
-
-fn consume_quoted_datetime_generic(json: &u8p::u8p) -> usize {
-    micro_util::consume_within_range(json, QUOTED_DATETIME_LOWER, QUOTED_DATETIME_UPPER)
-}
 
 // #[inline(never)]
 fn consume_colon(json: &[u8]) -> usize {
@@ -417,25 +403,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.finish();
 
 
-    let mut group = c.benchmark_group("consume_within_range \"2025-01-01\"");
-    let value = b"\"2025-01-01\"";
-    group.bench_function("many ifs", |b| b.iter(|| is_quoted_date_ifs( black_box(value))));
-    group.bench_function("bitwise ands", |b| b.iter(|| is_quoted_date_and( black_box(value))));
-    group.bench_function("simd", |b| b.iter(|| consume_quoted_date_simd( black_box(value))));
-    let value = u8pOwned::from(value);
-    group.bench_function("simd generic", |b| b.iter(|| consume_quoted_date_generic( black_box(&value.as_borrowed()))));
-    group.finish();
-
-    
-    let mut group = c.benchmark_group("consume_within_range \"2025-01-01T23:01:00\"");
-    let value = u8pOwned::from(b"\"2025-01-01T23:01:00\"");
-    group.bench_function("simd generic", |b| b.iter(|| consume_quoted_datetime_generic( black_box(&value.as_borrowed()))));
-    group.finish();
-
-
-
     let mut group = c.benchmark_group("consume_colon");
-    let mut rng = StdRng::from_seed(*seed);
     let test_cases :Vec<&str>  = vec!("", ":x", ": x"," : x", "} ", " }  }");
     for test_case in test_cases {
         group.bench_function(format!("3 if statements \"{test_case}\""), |b| b.iter(|| consume_colon( black_box(test_case.as_bytes()))));

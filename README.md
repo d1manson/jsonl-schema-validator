@@ -59,7 +59,7 @@ The supported types are inspired by - but not a perfect match to - BigQuery data
 - `ANY` - a unspecified blob of json (could be a scalar json value or a json array/object with arbitray depth).
 
 
-*the date & datetime types aren't 100% watertight validators; day of the month can run from 1 to 39 for all months.
+*the date & datetime types aren't 100% watertight validators; day of the month can be anything from 0 to 39 for all months.
 
 
 ## Benchmarks
@@ -211,7 +211,7 @@ The main other use of SIMD is for validating datetimes and numbers.
 The main trick used is to see whether bytes are within a range, e.g. is a given byte `b'0' <= val <= b'9`, but rather than doing it one
 char at a time, we do it for the full length of the expected datetime string. Where the string should have specific characters, like `:`,
 we can check for equality while still maintaining the inequality SIMD logic -  `b':' <= val <= b':'` - see 
-`src/micro_util.rs@consume_within_range` and its usages for details.
+`src/micro_util.rs@consume_date` and the other date & time functions in that file.
 
 A final trick to mention, which is likely only rarely needed, is to decide whether a 19 digit number is an INT64 or too large: the min/max
 for an INT64 in decimal form is 19 digits, but only some 19 digit numbers are compatible with INT64. Here we use a variation on the idea

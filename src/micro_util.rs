@@ -5,49 +5,6 @@ use std::ops::BitAnd;
 use crate::u8p::{u8p, DEFAULT_LANE_SIZE};
 
 
-/// Checks a specific length of bytes at the start of the json. If each byte is within the range given by the respective
-/// byte in the `[lower, upper]` values (inclusive) then it returns that length of bytes.
-/// 
-/// For example, with `lower:"bebbo"` and `upper:"zzzzz"` 
-/// - `"hello world"` => `5`
-/// - `"hallo world"` => `0`
-pub fn consume_within_range<const N: usize>(json: &u8p, lower: &[u8; N], upper: &[u8; N]) -> usize {
-
-    if N < 8 {
-        // i didn't actually benchmark this, but there must be some N below which SIMD isn't helpful. 
-        panic!("Not implemented for small N."); // maybe could use a non-simd approach?
-    } else if N <= 16 {
-        let data = json.initial_lane::<16,0>();
-
-        let mut buffer = [0; 16];
-        buffer[..N].copy_from_slice(lower);
-        let lower = u8x16::from(buffer);
-
-        let mut buffer =[255; 16];
-        buffer[..N].copy_from_slice(upper);
-        let upper = u8x16::from(buffer);
-
-        let check  =  data.simd_le(upper) & data.simd_ge(lower);
-        return if check.all() { N } else { 0 };
-    } else if N <= 32 {
-        let data = json.initial_lane::<32,0>();
-
-        let mut buffer = [0; 32];
-        buffer[..N].copy_from_slice(lower);
-        let lower = u8x32::from(buffer);
-
-        let mut buffer = [255; 32];
-        buffer[..N].copy_from_slice(upper);
-        let upper = u8x32::from(buffer);
-
-        let check  =  data.simd_le(upper) & data.simd_ge(lower);
-        return if check.all() { N } else { 0 };
-    } else {
-        panic!("Not implemented"); // TODO: implement for 16 < N <= 32, and 32 < N <= 64
-    }
-
-}
-
 /// This assumes the json is spec compliant, and the slice starts either on whitespace or on a json punctation char: `{}[],:`
 /// (to be extra pedantic, the slice should not be starting within a string; it's an actual bit of punctation in the json structure).
 /// 
@@ -385,6 +342,25 @@ pub fn consume_decimal_29_9(json: &u8p) -> usize {
 
 
 
+
+/// This assumes the json slice is the start of a spec-compliant value (not neccessarily a date string, but definitely compliant value).
+/// For a string of the form: `YYYY-MM-DD` it returns the number of bytes, including the start and end double quotes, otherwise zero. The
+/// '-' can be swapped for a '\' or a '.' char. Note that the DD is not properly validated, it can be anything from 00 to 39.
+pub fn consume_date(json: &u8p) -> usize {
+    let lower = u8x16::from(*b"\"0000-00-00\"\0\0\0\0");
+    let upper = u8x16::from(*b"\"9999/19/39\"\0\0\0\0"); 
+
+    let data = json.initial_lane::<16,0>();
+    let matched = data.simd_le(upper) & data.simd_ge(lower);
+    // TODO: at least validate month is 01 - 12, not 00 - 19 (DD is harder to deal with)
+    if matched.to_bitmask() & 0b1111_1111_1111 == 0b1111_1111_1111 {
+        return 12;
+    } else {
+        return 0
+    }
+}
+
+
 /// This assumes the json slice is the start of a spec-compliant value (not neccessarily a time string, but definitely compliant value).
 /// For a string of the form: `HH:MM[:SS[.SSSSSS]]` it returns the number of bytes, including the start and end double quotes, otherwise zero.
 pub fn consume_time(json: &u8p) -> usize {
@@ -394,12 +370,14 @@ pub fn consume_time(json: &u8p) -> usize {
     let data = json.initial_lane::<16, 0>();
     let matched  =  data.simd_le(upper) & data.simd_ge(lower);
     let mut ret = matched.to_bitmask().trailing_ones() as usize;
-    let next_char = json.raw_u8s().get(ret).unwrap_or(&0);
+    let json = json.raw_u8s();
+
+    let next_char = json.get(ret).unwrap_or(&0);
     ret += 1; // add closing quote
 
     let check1= *next_char == b'"';
     let check2 = (ret == "\"00:00\"".len()) | (ret >= b"\"00:00:00\"".len());
-    let check3 = (json.raw_u8s()[1] < b'2') | (json.raw_u8s()[2] <= b'3');
+    let check3 = (json[1] < b'2') | (json[2] <= b'3');
 
     if check1 && check2 && check3 {
         return ret;
@@ -410,7 +388,8 @@ pub fn consume_time(json: &u8p) -> usize {
 
 /// This assumes the json slice is the start of a spec-compliant value (not neccessarily a datetime string, but definitely compliant value).
 /// For a string of the form: `YYYY-MM-DDTHH:MM[:SS[.SSSSSS]]`. The '-' in the date can also be '\' or '.', and the `T` can also be a space.
-/// It returns the number of bytes, including the start and end double quotes, otherwise zero.
+/// It returns the number of bytes, including the start and end double quotes, otherwise zero. 
+/// Note that the DD is not properly validated, it can be anything from 00 to 39.
 pub fn consume_datetime(json: &u8p) -> usize {
     let lower = u8x32::from(*b"\"0000-00-00 00:00:00.000000\0\0\0\0\0");
     let upper = u8x32::from(*b"\"9999/19/39T29:59:59.999999\0\0\0\0\0");
@@ -426,7 +405,8 @@ pub fn consume_datetime(json: &u8p) -> usize {
     let check1= *next_char == b'"';
     let check2 = (json[11] == b' ') | (json[11] == b'T'); // initially we allowed any ascii from ' ' to 'T', but we just one one or the other
     let check3 = (ret == 18) | (ret >= 21);
-    let check4 = (json[12] < b'2') | (json[13] <= b'3');
+    let check4 = (json[12] < b'2') | (json[13] <= b'3'); 
+    // TODO: at least validate month is 01 - 12, not 00 - 19 (DD is harder to deal with)
 
     if check1 && check2 && check3 && check4 {
         return ret;
@@ -781,40 +761,36 @@ mod tests {
 
 
     #[test]
-    fn test_consume_within_range() {
-        pub const QUOTED_DATE_LOWER: &[u8; 12] = b"\"0000-00-00\"";
-        pub const QUOTED_DATE_UPPER: &[u8; 12] = b"\"9999/19/39\"";
-
-
+    fn test_consume_date() {
         // non-string valid values consume zero
-        assert_eq!(consume_within_range(&u8p!(b"null"), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0);
-        assert_eq!(consume_within_range(&u8p!(b"true"), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0);
-        assert_eq!(consume_within_range(&u8p!(b"false"), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0);
-        assert_eq!(consume_within_range(&u8p!(b"1"), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0);
-        assert_eq!(consume_within_range(&u8p!(b"-1"), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0);
-        assert_eq!(consume_within_range(&u8p!(b"[false]"), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0);
-        assert_eq!(consume_within_range(&u8p!(b"{false}"), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0);
+        assert_eq!(consume_date(&u8p!(b"null")), 0);
+        assert_eq!(consume_date(&u8p!(b"true")), 0);
+        assert_eq!(consume_date(&u8p!(b"false")), 0);
+        assert_eq!(consume_date(&u8p!(b"1")), 0);
+        assert_eq!(consume_date(&u8p!(b"-1")), 0);
+        assert_eq!(consume_date(&u8p!(b"[false]")), 0);
+        assert_eq!(consume_date(&u8p!(b"{false}")), 0);
 
         // within valid string values...
 
         // true
-        assert_eq!(consume_within_range(&u8p!(b"\"2023-10-27\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), QUOTED_DATE_LOWER.len());
-        assert_eq!(consume_within_range(&u8p!(b"\"2023/10/27\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), QUOTED_DATE_LOWER.len());
-        assert_eq!(consume_within_range(&u8p!(b"\"2023.10.27\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), QUOTED_DATE_LOWER.len());  // '.' is a valid separator as it's the char between '-' and '/' in ascii
-        assert_eq!(consume_within_range(&u8p!(b"\"2023-10/27\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), QUOTED_DATE_LOWER.len());  // WARNING: a mixed delimiter string is still valid here
-        assert_eq!(consume_within_range(&u8p!(b"\"2023x10x27\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0);  // x is not a valid separator
+        assert_eq!(consume_date(&u8p!(b"\"2023-10-27\"")), 12);
+        assert_eq!(consume_date(&u8p!(b"\"2023/10/27\"")), 12);
+        assert_eq!(consume_date(&u8p!(b"\"2023.10.27\"")), 12);  // '.' is a valid separator as it's the char between '-' and '/' in ascii
+        assert_eq!(consume_date(&u8p!(b"\"2023-10/27\"")), 12);  // WARNING: a mixed delimiter string is still valid here
         
-        
-        assert_eq!(consume_within_range(&u8p!(b"\"2023-09-01\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), QUOTED_DATE_LOWER.len());
-        assert_eq!(consume_within_range(&u8p!(b"\"2023-10-39\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), QUOTED_DATE_LOWER.len()); // WARNING: 39th of October passes our relaxed check 
+    
+        assert_eq!(consume_date(&u8p!(b"\"2023-09-01\"")), 12);
+        assert_eq!(consume_date(&u8p!(b"\"2023-10-39\"")), 12); // WARNING: 39th of October passes our relaxed check 
 
         // false
-        assert_eq!(consume_within_range(&u8p!(b"2023-10-27"), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0); // unqoted
-        assert_eq!(consume_within_range(&u8p!(b"\"2023-10-42\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0); // out of range days
-        assert_eq!(consume_within_range(&u8p!(b"\"2023-10-2x\""), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0);
-        assert_eq!(consume_within_range(&u8p!(b"\"2023-10-2x"), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0);
-        assert_eq!(consume_within_range(&u8p!(b"\"2023-10-20    }"), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0);
-        assert_eq!(consume_within_range(&u8p!(b"\"2023"), QUOTED_DATE_LOWER, QUOTED_DATE_UPPER), 0);
+        assert_eq!(consume_date(&u8p!(b"\"2023x10x27\"")), 0);  // x is not a valid separator
+        assert_eq!(consume_date(&u8p!(b"2023-10-27")), 0); // unqoted
+        assert_eq!(consume_date(&u8p!(b"\"2023-10-42\"")), 0); // out of range days
+        assert_eq!(consume_date(&u8p!(b"\"2023-10-2x\"")), 0);
+        assert_eq!(consume_date(&u8p!(b"\"2023-10-2x")), 0);
+        assert_eq!(consume_date(&u8p!(b"\"2023-10-20    }")), 0);
+        assert_eq!(consume_date(&u8p!(b"\"2023")), 0);
     }
 
     

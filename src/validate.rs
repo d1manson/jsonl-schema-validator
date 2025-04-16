@@ -198,12 +198,9 @@ pub fn validate<'a, 'b>(root_schema: &'a AdaptivePrefixMap<Field>, max_field_idx
                         FieldType::DECIMAL_29_9 => {
                             micro_util::consume_decimal_29_9(&json_offset)
                         },
-                        // unlike all the other consume logic, the date/time checks allow through strings that are very-nearly-but-not-quite compliant with our schema.
                         FieldType::DATE => {
                             // WARNING: doesn't fully validate day of month
-                            const QUOTED_DATE_LOWER: &[u8; 12] = b"\"0000-00-00\"";
-                            const QUOTED_DATE_UPPER: &[u8; 12] = b"\"9999/19/39\""; 
-                            micro_util::consume_within_range(&json_offset, QUOTED_DATE_LOWER, QUOTED_DATE_UPPER)
+                            micro_util::consume_date(&json_offset)
                         },
                         FieldType::TIME => {
                             micro_util::consume_time(&json_offset)
