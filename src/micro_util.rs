@@ -408,6 +408,32 @@ pub fn consume_time(json: &u8p) -> usize {
     }
 }
 
+/// This assumes the json slice is the start of a spec-compliant value (not neccessarily a datetime string, but definitely compliant value).
+/// For a string of the form: `YYYY-MM-DDTHH:MM[:SS[.SSSSSS]]`. The '-' in the date can also be '\' or '.', and the `T` can also be a space.
+/// It returns the number of bytes, including the start and end double quotes, otherwise zero.
+pub fn consume_datetime(json: &u8p) -> usize {
+    let lower = u8x32::from(*b"\"0000-00-00 00:00:00.000000\0\0\0\0\0");
+    let upper = u8x32::from(*b"\"9999/19/39T29:59:59.999999\0\0\0\0\0");
+
+    let data = json.initial_lane::<32, 0>();
+    let matched  =  data.simd_le(upper) & data.simd_ge(lower);
+    let mut ret = matched.to_bitmask().trailing_ones() as usize;
+    let json = json.raw_u8s();
+
+    let next_char = json.get(ret).unwrap_or(&0);
+    ret += 1; // add closing quote
+
+    let check1= *next_char == b'"';
+    let check2 = (json[11] == b' ') | (json[11] == b'T'); // initially we allowed any ascii from ' ' to 'T', but we just one one or the other
+    let check3 = (ret == 18) | (ret >= 21);
+    let check4 = (json[12] < b'2') | (json[13] <= b'3');
+
+    if check1 && check2 && check3 && check4 {
+        return ret;
+    } else {
+        return 0;
+    }
+}
 
 
 /// Assumes json is valid, and is the start of a value of some kind. If it is the start of an array, it
@@ -725,6 +751,34 @@ mod tests {
         assert_eq!(consume_time(&u8p!(b"\"12:45:08.0123456\"  ")), 0);
         assert_eq!(consume_time(&u8p!(b"\"12:45:08x0123\"  ")), 0);
     }
+
+
+    #[test]
+    fn test_consume_datetime(){
+        assert_eq!(consume_datetime(&u8p!(b"null")), 0);
+        assert_eq!(consume_datetime(&u8p!(b"true")), 0);
+        assert_eq!(consume_datetime(&u8p!(b"false")), 0);
+        assert_eq!(consume_datetime(&u8p!(b"1")), 0);
+        assert_eq!(consume_datetime(&u8p!(b"-1")), 0);
+        assert_eq!(consume_datetime(&u8p!(b"[false]")), 0);
+        assert_eq!(consume_datetime(&u8p!(b"{false}")), 0);
+        assert_eq!(consume_datetime(&u8p!(b"\"hello\"")), 0);
+
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27\"   ")), 0);
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45\"   ")), 18);
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45 \"   ")), 0);
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45:08\"   ")), 21);
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27 12:45:08\"   ")), 21);
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T23:45:08\"   ")), 21);
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T33:45:08\"   ")), 0); // 33 hrs in a day..no
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T24:45:08\"   ")), 0); // 24 o'clock is the next day, so no
+        
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45:08.0123\"   ")), 26);
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45:08.012345\"   ")), 28);
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45:08.0123456\"   ")), 0);
+        assert_eq!(consume_datetime(&u8p!(b"\"2023-10-27T12:45:08x0123456\"   ")), 0);
+    }
+
 
     #[test]
     fn test_consume_within_range() {

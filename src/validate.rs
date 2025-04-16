@@ -200,19 +200,17 @@ pub fn validate<'a, 'b>(root_schema: &'a AdaptivePrefixMap<Field>, max_field_idx
                         },
                         // unlike all the other consume logic, the date/time checks allow through strings that are very-nearly-but-not-quite compliant with our schema.
                         FieldType::DATE => {
+                            // WARNING: doesn't fully validate day of month
                             const QUOTED_DATE_LOWER: &[u8; 12] = b"\"0000-00-00\"";
                             const QUOTED_DATE_UPPER: &[u8; 12] = b"\"9999/19/39\""; 
                             micro_util::consume_within_range(&json_offset, QUOTED_DATE_LOWER, QUOTED_DATE_UPPER)
-                            // missing: check = ((json[6] < '1') | (json[7] <= '2')) &  (json[9] < '3') | (json[10] <= '1') ...but still allows invalid dates (do we need to deal with months, what about leap years?!)
                         },
                         FieldType::TIME => {
                             micro_util::consume_time(&json_offset)
                         },
                         FieldType::DATETIME => {
-                            const QUOTED_DATETIME_LOWER: &[u8; 21] = b"\"0000-00-00T00:00:00\""; 
-                            const QUOTED_DATETIME_UPPER: &[u8; 21] = b"\"9999/19/39T29:59:59\"";
-                            micro_util::consume_within_range(&json_offset, QUOTED_DATETIME_LOWER, QUOTED_DATETIME_UPPER)
-                            // missing: both kinds of checks above
+                            // WARNING: doesn't fully validate day of month
+                            micro_util::consume_datetime(&json_offset)
                         },
                         FieldType::BYTES => {
                             micro_util::consume_base64(&json_offset)
