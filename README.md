@@ -233,7 +233,7 @@ it's always nice to hear from people who like your work ;)!
 
 ## TODOs
 
-- [ ] Add tests on the `validate.rs` module itself.
+- [ ] Provide some (more) samples.
 - [ ] Explore more optimisations at the level of the `validate` function itself (to date optmisation has been mostly at lower 
       levels). This will presumably require implementing benchmarks for the function too.
 - [ ] Examine the thread pool performance carefully, to see if there are any imrpovements to be had, e.g. batches of lines rather than

@@ -157,8 +157,14 @@ pub fn validate<'a, 'b>(root_schema: &'a AdaptivePrefixMap<Field>, max_field_idx
                             j += j_inc_bra;
                         }
                     }
-                    stack.push(StackEntry{schema: sub_schema.as_ref(), mode: field.mode, is_initialised: false});
-                    continue 'stack_loop;
+
+                    let j_inc_close_array = micro_util::consume_punct::<b']', false>(&json.offset(j));
+                    if j_inc_close_array == 0 {
+                        stack.push(StackEntry{schema: sub_schema.as_ref(), mode: field.mode, is_initialised: false});
+                        continue 'stack_loop;
+                    } else {
+                        j += j_inc_close_array;
+                    }
                 }
             } else {
                 // A singelton/repeated value or null
@@ -292,4 +298,175 @@ pub fn validate<'a, 'b>(root_schema: &'a AdaptivePrefixMap<Field>, max_field_idx
     }
 
     return ValidationResult::Valid;
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// convert a byte literal into a properly padded `u8p`
+    macro_rules! u8p {
+        ($x:literal) => {
+            u8p::u8p::add_padding(&mut $x.into())
+        }
+    }
+
+    const MFID: usize = 10; // max field idx
+
+    fn make_base_schema() -> Vec<Field> {
+        vec![
+            Field {idx: 0, name: "str_field".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::STRING},
+            Field {idx: 1, name: "date_field".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::DATE},
+            Field {idx: 2, name: "datetime_field".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::DATETIME},
+            Field {idx: 3, name: "time_field".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::TIME},
+            Field {idx: 4, name: "timestamp_field".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::TIMESTAMP},
+            Field {idx: 5, name: "bool_field".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::BOOL},
+            Field {idx: 6, name: "int_field".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::INT64},
+            Field {idx: 7, name: "float_field".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::FLOAT64},
+            Field {idx: 8, name: "decimal_field".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::DECIMAL_29_9},
+            Field {idx: 9, name: "bytes_field".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::BYTES},
+            Field {idx: MFID, name: "any_field".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::ANY}
+        ]
+    }
+
+
+    #[test]
+    fn test_validate_basic() {
+        let mut scratch = ValidateScratch::default();
+
+        let schema = make_base_schema();
+        let schema = AdaptivePrefixMap::create(
+            schema.into_iter().map(|field| (field.name.clone(), field)).collect::<Vec<_>>());
+
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"str_field": null}"#), &mut scratch), ValidationResult::Valid{});
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"str_field": "this is a string"}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"str_field": "take1", "str_field": "take2"}"#), &mut scratch), ValidationResult::FieldDuplicated(ByteOffset(24), "str_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"random_field": null}"#), &mut scratch), ValidationResult::FieldUnrecognised(ByteOffset(2), "random_field"));
+
+        let mut schema = make_base_schema();
+        schema[0].mode = FieldMode::REQUIRED;
+        let schema = AdaptivePrefixMap::create(
+            schema.into_iter().map(|field| (field.name.clone(), field)).collect::<Vec<_>>());
+        
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{}"#), &mut scratch), ValidationResult::RequiredFieldAbsent(ByteOffset(2), "str_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"str_field": "this is a string"}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"str_field": null}"#), &mut scratch), ValidationResult::RequiredFieldIsNull(ByteOffset(14), "str_field")); 
+
+        let mut schema = make_base_schema();
+        schema[0].mode = FieldMode::REPEATED;
+        schema[5].mode = FieldMode::REQUIRED; // bool_field ..make it required to ensure we do find it after the any_field below...
+        let schema = AdaptivePrefixMap::create(
+            schema.into_iter().map(|field| (field.name.clone(), field)).collect::<Vec<_>>());
+        
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{}"#), &mut scratch), ValidationResult::RequiredFieldAbsent(ByteOffset(2), "bool_field"));         
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"str_field": [], "bool_field": false}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"str_field": ["hello", "world"], "bool_field": false}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"str_field": "not an array!!!!", "bool_field": false}"#), &mut scratch), ValidationResult::RepeatedFieldIsNotArray(ByteOffset(14), "str_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"str_field": ["hello", 1234], "bool_field": false}"#), &mut scratch), ValidationResult::ArrayContentsInvalid(ByteOffset(24), "str_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"str_field": ["hello", null], "bool_field": false}"#), &mut scratch), ValidationResult::ArrayContentsInvalid(ByteOffset(24), "str_field")); 
+    }
+
+
+    #[test]
+    fn test_validate_types(){
+        let mut scratch = ValidateScratch::default();
+
+        let schema = make_base_schema();
+        let schema = AdaptivePrefixMap::create(
+            schema.into_iter().map(|field| (field.name.clone(), field)).collect::<Vec<_>>());
+
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"str_field": "this is a string"}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"str_field": "take1", "str_field": "take2"}"#), &mut scratch), ValidationResult::FieldDuplicated(ByteOffset(24), "str_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"str_field": 123}"#), &mut scratch), ValidationResult::FieldValueInvalid(ByteOffset(14), "str_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"date_field": "2025-03-01"}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"date_field": "2025-03-99}"#), &mut scratch), ValidationResult::FieldValueInvalid(ByteOffset(15), "date_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"datetime_field": "2025-03-01T13:05:00"}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"datetime_field": "2025-03-01T13:99:00}"#), &mut scratch), ValidationResult::FieldValueInvalid(ByteOffset(19), "datetime_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"time_field": "13:10:00.123"}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"time_field": "13:10:00!123}"#), &mut scratch), ValidationResult::FieldValueInvalid(ByteOffset(15), "time_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"timestamp_field": "2025-03-01T13:05:00 Z"}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"timestamp_field": "2025-03-01T13:05:00 X"#), &mut scratch), ValidationResult::FieldValueInvalid(ByteOffset(20), "timestamp_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"bool_field": false}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"bool_field": 42}"#), &mut scratch), ValidationResult::FieldValueInvalid(ByteOffset(15), "bool_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"int_field": 123456789}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"int_field": 12345678901234567801}"#), &mut scratch), ValidationResult::FieldValueInvalid(ByteOffset(14), "int_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"float_field": 123456789e+21}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"float_field": "shmoat"}"#), &mut scratch), ValidationResult::FieldValueInvalid(ByteOffset(16), "float_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"decimal_field": 123456789.123}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"decimal_field": 123456789.1234567890123}"#), &mut scratch), ValidationResult::FieldValueInvalid(ByteOffset(18), "decimal_field")); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"bytes_field": "xxxyy=="}"#), &mut scratch), ValidationResult::Valid{}); 
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"bytes_field": "xxxyy= ="}"#), &mut scratch), ValidationResult::FieldValueInvalid(ByteOffset(16), "bytes_field"));
+
+        let mut schema = make_base_schema();
+        schema[5].mode = FieldMode::REQUIRED; // bool_field ..make it required to ensure we do find it after the any_field below...
+        let schema = AdaptivePrefixMap::create(
+            schema.into_iter().map(|field| (field.name.clone(), field)).collect::<Vec<_>>());
+
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"any_field": "string val"}"#), &mut scratch), ValidationResult::RequiredFieldAbsent(ByteOffset(27), "bool_field"));
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"any_field": "string val", "bool_field": false}"#), &mut scratch), ValidationResult::Valid{});
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"any_field": 123, "bool_field": false}"#), &mut scratch), ValidationResult::Valid{});
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"any_field": true, "bool_field": false}"#), &mut scratch), ValidationResult::Valid{});
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"any_field": [[true]], "bool_field": false}"#), &mut scratch), ValidationResult::Valid{});
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"any_field": [{"k":23}, [true]], "bool_field": false}"#), &mut scratch), ValidationResult::Valid{});
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"any_field": {"k":23}, "bool_field": false}"#), &mut scratch), ValidationResult::Valid{});
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"any_field": null, "bool_field": false}"#), &mut scratch), ValidationResult::Valid{});
+
+    }
+
+    #[test]
+    fn test_validate_struct(){
+        let mut scratch = ValidateScratch::default();
+
+        let mut schema = make_base_schema();
+        schema[5].mode = FieldMode::REQUIRED; // bool_field ..make it required to ensure we do find it after the any_field below...
+        schema.pop();
+        schema.pop();
+        
+        let sub_schema = vec![
+            Field {idx: 9, name: "str_subfield".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::STRING},
+            Field {idx: 10, name: "date_subfield".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::DATE},
+        ];
+        let sub_schema = AdaptivePrefixMap::create(
+            sub_schema.into_iter().map(|field| (field.name.clone(), field)).collect::<Vec<_>>());
+        schema[0].type_ = FieldType::STRUCT(Box::new(sub_schema));
+        schema[0].name = "struct_field".to_string();
+        let schema = AdaptivePrefixMap::create(
+            schema.into_iter().map(|field| (field.name.clone(), field)).collect::<Vec<_>>());
+
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"bool_field": true}"#), &mut scratch), ValidationResult::Valid);
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"struct_field": null, "bool_field": true}"#), &mut scratch), ValidationResult::Valid);
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"struct_field": {}, "bool_field": true}"#), &mut scratch), ValidationResult::Valid);
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"struct_field": {"random_field": 32}, "bool_field": true}"#), &mut scratch), ValidationResult::FieldUnrecognised(ByteOffset(19), "random_field"));
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"struct_field": {"str_subfield": "hi"}, "bool_field": true}"#), &mut scratch), ValidationResult::Valid);
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"struct_field": {"str_subfield": "hi", "date_subfield": "2024-04-12"}, "bool_field": true}"#), &mut scratch), ValidationResult::Valid);
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"struct_field": {"str_subfield": "hi", "date_subfield": "2024-04-12a"}, "bool_field": true}"#), &mut scratch), ValidationResult::FieldValueInvalid(ByteOffset(57), "date_subfield"));
+
+
+        // Do the same thing, but now make the sub struct REPEATED
+        let mut schema = make_base_schema();
+        schema[5].mode = FieldMode::REQUIRED; // bool_field ..make it required to ensure we do find it after the any_field below...
+        schema.pop();
+        schema.pop();
+        
+        let sub_schema = vec![
+            Field {idx: 9, name: "str_subfield".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::STRING},
+            Field {idx: 10, name: "date_subfield".to_string(), mode: FieldMode::NULLABLE, type_: FieldType::DATE},
+        ];
+        let sub_schema = AdaptivePrefixMap::create(
+            sub_schema.into_iter().map(|field| (field.name.clone(), field)).collect::<Vec<_>>());
+        schema[0].type_ = FieldType::STRUCT(Box::new(sub_schema));
+        schema[0].name = "struct_field".to_string();
+        schema[0].mode = FieldMode::REPEATED; // THIS IS THE CHANGE
+        let schema = AdaptivePrefixMap::create(
+            schema.into_iter().map(|field| (field.name.clone(), field)).collect::<Vec<_>>());
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"bool_field": true}"#), &mut scratch), ValidationResult::Valid);
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"struct_field": null, "bool_field": true}"#), &mut scratch), ValidationResult::Valid);
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"struct_field": {}, "bool_field": true}"#), &mut scratch), ValidationResult::RepeatedFieldIsNotArray(ByteOffset(17), "struct_field"));
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"struct_field": [{"str_subfield": "hi"], "bool_field": true}"#), &mut scratch), ValidationResult::Valid);
+        assert_eq!(validate(&schema, MFID, &u8p!(br#"{"struct_field": [], "bool_field": true}"#), &mut scratch), ValidationResult::Valid);
+
+
+    }
 }
